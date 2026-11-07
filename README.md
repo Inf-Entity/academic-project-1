@@ -4,6 +4,11 @@
 
 Xây dựng 100% bằng **HTML5, CSS3 và Vanilla JavaScript (ES6+) thuần túy**, không sử dụng framework, không thư viện bên ngoài, không build tool và không cần cài đặt backend.
 
+![HTML5](https://img.shields.io/badge/HTML5-orange?logo=html5)
+![CSS3](https://img.shields.io/badge/CSS3-blue?logo=css3)
+![JavaScript](https://img.shields.io/badge/JavaScript-ES2020-yellow?logo=javascript)
+![License](https://img.shields.io/badge/License-MIT-green)
+
 ---
 
 ## 1. Cấu trúc Dự án (Project Structure)
@@ -98,3 +103,17 @@ Khi tải ứng dụng lần đầu tiên, hệ thống tự động khởi tạ
    Khoản nộp thừa (nếu có do chỉnh sửa mức miễn giảm sau khi nộp) được tách riêng thành cảnh báo và không tính lẫn vào công nợ phải thu.
 8. **Chặn Xóa Sinh viên Có Dữ liệu**: Chặn tuyệt đối hành vi xóa sinh viên đã phát sinh hồ sơ học phí hoặc phiếu thu với thông báo:
    `"Không thể xóa sinh viên đã có dữ liệu học phí."`
+
+## Ảnh chụp giao diện
+
+### Tổng quan & báo cáo
+
+![Dashboard](assets/screenshots/dashboard.png)
+
+### Sinh viên
+
+![Students](assets/screenshots/students.png)
+
+### Quản lý chi trả
+
+![Payments](assets/screenshots/payments.png)
