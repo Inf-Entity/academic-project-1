@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hệ thống Quản lý Học phí Sinh viên</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Thông báo lỗi lưu trữ nếu có sự cố localStorage -->
+  <aside id="storage-alert" class="alert-banner alert-warning" role="alert" hidden></aside>
+
+  <!-- MÀN HÌNH ĐĂNG NHẬP (Chỉ hiển thị khi chưa xác thực) -->
+  <div id="login-screen" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="logo-mark" aria-hidden="true">🎓</div>
+        <h1>Học viện &amp; Đại học</h1>
+        <p class="subtitle">Hệ thống Quản lý Học phí Sinh viên</p>
+      </div>
+
+      <div class="demo-credentials-box">
+        <strong>Tài khoản Demo Quản trị viên:</strong>
+        <p>Tên đăng nhập: <code>admin</code> | Mật khẩu: <code>admin123</code></p>
+        <small class="text-muted">(Lưu ý: Xác thực client-side cho mục đích thử nghiệm)</small>
+      </div>
+
+      <form id="login-form" novalidate>
+        <div class="form-group">
+          <label for="login-username">Tên đăng nhập <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="login-username" 
+            name="username" 
+            autocomplete="username" 
+            autocapitalize="off" 
+            autocorrect="off" 
+            spellcheck="false" 
+            required 
+            aria-describedby="login-username-error"
+          >
+          <span id="login-username-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="login-password">Mật khẩu <span class="required">*</span></label>
+          <input 
+            type="password" 
+            id="login-password" 
+            name="password" 
+            autocomplete="current-password" 
+            required 
+            aria-describedby="login-password-error"
+          >
+          <span id="login-password-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div id="login-general-error" class="error-banner" role="alert" hidden></div>
+
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">Đăng nhập Quản trị</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- GIAO DIỆN CHÍNH (Chỉ hiển thị sau khi đăng nhập) -->
+  <div id="app-container" class="app-container" hidden>
+    <!-- Thanh tiêu đề hệ thống -->
+    <header class="app-header">
+      <div class="header-branding">
+        <span class="header-logo" aria-hidden="true">🎓</span>
+        <div class="header-titles">
+          <span class="school-tag">[Tên trường]</span>
+          <h1 class="system-title">Quản lý Học phí Sinh viên</h1>
+        </div>
+      </div>
+      <div class="header-user">
+        <span class="user-badge" id="current-user-display">👤 Quản trị viên: <strong>Admin</strong></span>
+        <button type="button" id="btn-logout" class="btn btn-outline-danger btn-sm">Đăng xuất</button>
+      </div>
+    </header>
+
+    <!-- Điều hướng phân hệ (Tab Navigation) -->
+    <nav class="app-nav" aria-label="Điều hướng chính">
+      <ul class="nav-tabs" role="tablist">
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-reports" aria-selected="true" aria-controls="panel-reports" tabindex="0">
+            📊 Tổng quan &amp; Báo cáo
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-students" aria-selected="false" aria-controls="panel-students" tabindex="-1">
+            👨‍🎓 Sinh viên
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-rates" aria-selected="false" aria-controls="panel-rates" tabindex="-1">
+            🏷️ Định mức Tín chỉ
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-fees" aria-selected="false" aria-controls="panel-fees" tabindex="-1">
+            📑 Hồ sơ Học phí
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-payments" aria-selected="false" aria-controls="panel-payments" tabindex="-1">
+            💳 Thu học phí &amp; Hoàn trả
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-search" aria-selected="false" aria-controls="panel-search" tabindex="-1">
+            🔍 Tra cứu Lịch sử
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Khu vực nội dung các phân hệ -->
+    <main class="main-content">
+      <!-- 1. TỔNG QUAN & BÁO CÁO THỐNG KÊ (Module 7) -->
+      <section id="panel-reports" role="tabpanel" aria-labelledby="tab-reports" class="tab-panel active">
+        <div class="panel-header">
+          <div>
+            <h2>Báo cáo Thống kê &amp; Đối soát Học phí</h2>
+            <p class="panel-desc">Tổng hợp tình hình thu học phí, đối soát công nợ theo học kỳ và toàn trường.</p>
+          </div>
+          <div class="filter-group">
+            <label for="report-semester-filter">Lọc theo học kỳ:</label>
+            <select id="report-semester-filter" class="form-control">
+              <option value="ALL">-- Tất cả học kỳ --</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Thẻ thống kê tổng hợp -->
+        <div class="kpi-grid">
+          <div class="kpi-card kpi-blue">
+            <div class="kpi-title">Tổng phải thu (Net Receivable)</div>
+            <div class="kpi-value" id="kpi-receivable">0 ₫</div>
+            <div class="kpi-hint">Tổng học phí sau miễn giảm</div>
+          </div>
+          <div class="kpi-card kpi-green">
+            <div class="kpi-title">Đã thực thu (Net Collected)</div>
+            <div class="kpi-value" id="kpi-collected">0 ₫</div>
+            <div class="kpi-hint">Tổng thu trừ tổng hoàn tiền</div>
+          </div>
+          <div class="kpi-card kpi-amber">
+            <div class="kpi-title">Còn phải thu (Outstanding Debt)</div>
+            <div class="kpi-value" id="kpi-outstanding">0 ₫</div>
+            <div class="kpi-hint">Tổng công nợ còn thiếu</div>
+          </div>
+          <div class="kpi-card kpi-purple">
+            <div class="kpi-title">Đối soát Công nợ</div>
+            <div class="kpi-value" id="kpi-reconciliation-status">Khớp 100%</div>
+            <div class="kpi-hint" id="kpi-reconciliation-hint">Đã thu + Còn nợ = Phải thu</div>
+          </div>
+        </div>
+
+        <!-- Cảnh báo tiền nộp thừa nếu có -->
+        <div id="report-overpaid-alert" class="alert-box alert-warning" hidden>
+          <span class="alert-icon" aria-hidden="true">⚠️</span>
+          <div>
+            <strong>Khoản nộp thừa cần xử lý:</strong> Có <span id="report-overpaid-count">0</span> hồ sơ nộp vượt mức với tổng số tiền nộp thừa là <strong id="report-overpaid-amount">0 ₫</strong>. Khoản này không tính vào công nợ phải thu và cần lập yêu cầu hoàn tiền.
+          </div>
+        </div>
+
+        <!-- Bảng thống kê theo trạng thái sinh viên -->
+        <div class="content-card">
+          <h3>Thống kê Số lượng Sinh viên theo Trạng thái Thanh toán</h3>
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng thống kê trạng thái thanh toán">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Trạng thái Thanh toán</th>
+                  <th scope="col" class="text-right">Số sinh viên</th>
+                  <th scope="col" class="text-right">Tỷ lệ (%)</th>
+                  <th scope="col" class="text-right">Tổng tiền phải thu</th>
+                  <th scope="col" class="text-right">Tổng tiền đã thu</th>
+                  <th scope="col" class="text-right">Tổng tiền còn nợ</th>
+                </tr>
+              </thead>
+              <tbody id="report-status-breakdown-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Bảng chi tiết sinh viên trong phạm vi báo cáo -->
+        <div class="content-card">
+          <h3>Danh sách Chi tiết Hồ sơ Học phí trong Báo cáo</h3>
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng danh sách hồ sơ học phí trong báo cáo">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Mã SV</th>
+                  <th scope="col">Họ và tên</th>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số TC</th>
+                  <th scope="col" class="text-right">Học phí gốc</th>
+                  <th scope="col" class="text-right">Miễn giảm</th>
+                  <th scope="col" class="text-right">Phải nộp</th>
+                  <th scope="col" class="text-right">Đã nộp</th>
+                  <th scope="col" class="text-right">Còn nợ</th>
+                  <th scope="col">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody id="report-fee-records-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. QUẢN LÝ SINH VIÊN (Student Data) -->
+      <section id="panel-students" role="tabpanel" aria-labelledby="tab-students" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Danh bạ Sinh viên</h2>
+            <p class="panel-desc">Quản lý hồ sơ sinh viên, thông tin lớp học và tổng hợp công nợ xuyên học kỳ.</p>
+          </div>
+          <button type="button" id="btn-open-student-modal" class="btn btn-primary">➕ Thêm sinh viên mới</button>
+        </div>
+
+        <div class="content-card">
+          <div class="table-actions">
+            <div class="search-box">
+              <label for="student-search-input" class="visually-hidden">Tìm kiếm sinh viên</label>
+              <input type="search" id="student-search-input" placeholder="Tìm theo Mã SV, Họ tên (hỗ trợ không dấu)..." class="form-control">
+            </div>
+            <div class="record-counter"><span id="student-count-display">0</span> sinh viên</div>
+          </div>
+
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng danh sách sinh viên">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Mã Sinh viên</th>
+                  <th scope="col">Họ và tên</th>
+                  <th scope="col">Lớp</th>
+                  <th scope="col" class="text-right">Tổng phải nộp</th>
+                  <th scope="col" class="text-right">Tổng đã nộp</th>
+                  <th scope="col" class="text-right">Đã hoàn lại</th>
+                  <th scope="col" class="text-right">Tổng còn nợ</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="students-table-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. ĐỊNH MỨC TÍN CHỈ (Module 1) -->
+      <section id="panel-rates" role="tabpanel" aria-labelledby="tab-rates" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Định mức Học phí Tín chỉ theo Học kỳ</h2>
+            <p class="panel-desc">Thiết lập đơn giá mỗi tín chỉ cho từng học kỳ. Lưu ý: Khi chỉnh sửa đơn giá, các hồ sơ học phí đã lập trước đó không bị thay đổi vì đã lưu bản chụp đơn giá (rate snapshot).</p>
+          </div>
+          <button type="button" id="btn-open-rate-modal" class="btn btn-primary">➕ Thêm định mức học kỳ</button>
+        </div>
+
+        <div class="content-card">
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng danh sách định mức tín chỉ">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Đơn giá / Tín chỉ (VND)</th>
+                  <th scope="col">Cập nhật lần cuối</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="rates-table-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. HỒ SƠ HỌC PHÍ & MIỄN GIẢM (Module 2 & 3) -->
+      <section id="panel-fees" role="tabpanel" aria-labelledby="tab-fees" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Hồ sơ Học phí &amp; Miễn giảm</h2>
+            <p class="panel-desc">Tạo và quản lý nghĩa vụ học phí cho từng sinh viên theo học kỳ, áp dụng chính sách miễn giảm phần trăm hoặc số tiền cố định.</p>
+          </div>
+          <button type="button" id="btn-open-fee-modal" class="btn btn-primary">➕ Lập hồ sơ học phí</button>
+        </div>
+
+        <div class="content-card">
+          <div class="filter-bar">
+            <div class="filter-item">
+              <label for="fee-filter-semester">Học kỳ:</label>
+              <select id="fee-filter-semester" class="form-control">
+                <option value="ALL">-- Tất cả học kỳ --</option>
+              </select>
+            </div>
+            <div class="filter-item">
+              <label for="fee-filter-status">Trạng thái:</label>
+              <select id="fee-filter-status" class="form-control">
+                <option value="ALL">-- Tất cả trạng thái --</option>
+                <option value="Chưa thanh toán">Chưa thanh toán</option>
+                <option value="Thanh toán một phần">Thanh toán một phần</option>
+                <option value="Đã thanh toán đủ">Đã thanh toán đủ</option>
+                <option value="OVERPAID">Thừa tiền (Đã nộp vượt mức)</option>
+              </select>
+            </div>
+            <div class="filter-item flex-grow">
+              <label for="fee-search-student">Tìm sinh viên:</label>
+              <input type="search" id="fee-search-student" placeholder="Nhập tên hoặc mã SV..." class="form-control">
+            </div>
+          </div>
+
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng danh sách hồ sơ học phí">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Mã SV</th>
+                  <th scope="col">Họ và tên</th>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số TC</th>
+                  <th scope="col" class="text-right">Đơn giá áp dụng</th>
+                  <th scope="col" class="text-right">Học phí gốc</th>
+                  <th scope="col" class="text-right">Miễn giảm</th>
+                  <th scope="col" class="text-right">Phải nộp (Net)</th>
+                  <th scope="col" class="text-right">Đã nộp</th>
+                  <th scope="col" class="text-right">Còn nợ</th>
+                  <th scope="col">Trạng thái</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="fees-table-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. THU HỌC PHÍ & HOÀN TIỀN (Module 4) -->
+      <section id="panel-payments" role="tabpanel" aria-labelledby="tab-payments" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Thu học phí &amp; Quy trình Hoàn tiền</h2>
+            <p class="panel-desc">Ghi nhận các phiếu nộp học phí, quản lý yêu cầu hoàn tiền nộp thừa và lịch sử giao dịch sổ quỹ.</p>
+          </div>
+          <button type="button" id="btn-open-payment-modal" class="btn btn-success">💵 Lập Phiếu Thu Học Phí</button>
+        </div>
+
+        <!-- Tab con: Lịch sử phiếu thu / Yêu cầu hoàn tiền -->
+        <div class="sub-nav">
+          <button type="button" class="sub-tab-btn active" id="subtab-all-tx">Toàn bộ Giao dịch</button>
+          <button type="button" class="sub-tab-btn" id="subtab-refunds">Yêu cầu Hoàn tiền (<span id="pending-refund-count">0</span> chờ duyệt)</button>
+        </div>
+
+        <div class="content-card">
+          <div id="tx-view-container">
+            <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng toàn bộ giao dịch sổ quỹ">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Số biên lai</th>
+                    <th scope="col">Ngày GD</th>
+                    <th scope="col">Mã SV</th>
+                    <th scope="col">Họ và tên</th>
+                    <th scope="col">Học kỳ</th>
+                    <th scope="col">Loại GD</th>
+                    <th scope="col" class="text-right">Số tiền</th>
+                    <th scope="col">Phương thức</th>
+                    <th scope="col">Trạng thái</th>
+                    <th scope="col">Ghi chú</th>
+                    <th scope="col" class="text-center">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="transactions-table-body">
+                  <!-- Điền tự động bằng JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="refunds-view-container" hidden>
+            <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng yêu cầu hoàn tiền">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Mã yêu cầu</th>
+                    <th scope="col">Ngày tạo</th>
+                    <th scope="col">Mã SV</th>
+                    <th scope="col">Họ và tên</th>
+                    <th scope="col">Học kỳ</th>
+                    <th scope="col" class="text-right">Số tiền hoàn</th>
+                    <th scope="col">Lý do hoàn tiền</th>
+                    <th scope="col">Trạng thái</th>
+                    <th scope="col" class="text-center">Xử lý duyệt</th>
+                  </tr>
+                </thead>
+                <tbody id="refunds-table-body">
+                  <!-- Điền tự động bằng JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 6. TRA CỨU LỊCH SỬ GIAO DỊCH (Module 6) -->
+      <section id="panel-search" role="tabpanel" aria-labelledby="tab-search" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Tra cứu Lịch sử Thanh toán &amp; Sổ Cái</h2>
+            <p class="panel-desc">Tìm kiếm lịch sử nộp tiền, hoàn tiền, đảo mục theo Mã sinh viên, Họ tên (hỗ trợ tiếng Việt không dấu) và Học kỳ với số dư lũy kế.</p>
+          </div>
+        </div>
+
+        <div class="content-card">
+          <form id="search-filter-form" class="search-ledger-grid" novalidate>
+            <div class="form-group">
+              <label for="ledger-search-keyword">Từ khóa tìm kiếm:</label>
+              <input type="search" id="ledger-search-keyword" placeholder="Nhập Mã SV hoặc Họ tên (VD: nguyen van an)..." class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="ledger-filter-semester">Học kỳ:</label>
+              <select id="ledger-filter-semester" class="form-control">
+                <option value="ALL">-- Tất cả học kỳ --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="ledger-filter-from-date">Từ ngày:</label>
+              <input type="date" id="ledger-filter-from-date" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="ledger-filter-to-date">Đến ngày:</label>
+              <input type="date" id="ledger-filter-to-date" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="ledger-filter-status">Trạng thái hồ sơ:</label>
+              <select id="ledger-filter-status" class="form-control">
+                <option value="ALL">-- Tất cả --</option>
+                <option value="Chưa thanh toán">Chưa thanh toán</option>
+                <option value="Thanh toán một phần">Thanh toán một phần</option>
+                <option value="Đã thanh toán đủ">Đã thanh toán đủ</option>
+              </select>
+            </div>
+            <div class="form-group search-btn-col">
+              <button type="button" id="btn-reset-search" class="btn btn-outline-secondary">Đặt lại</button>
+            </div>
+          </form>
+
+          <!-- Kết quả tra cứu sổ cái -->
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng kết quả tra cứu lịch sử thanh toán">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Ngày GD</th>
+                  <th scope="col">Số biên lai</th>
+                  <th scope="col">Mã SV</th>
+                  <th scope="col">Họ và tên</th>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col">Loại GD</th>
+                  <th scope="col" class="text-right">Số tiền GD</th>
+                  <th scope="col">Phương thức</th>
+                  <th scope="col" class="text-right">Số dư còn nợ sau GD</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="ledger-table-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ==================== CÁC HỘP THOẠI MODAL (NATIVE <DIALOG>) ==================== -->
+
+  <!-- Modal: Thêm/Sửa Sinh viên -->
+  <dialog id="modal-student" aria-labelledby="modal-student-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-student-title">Thêm sinh viên mới</h2>
+        <button type="button" class="btn-close" id="btn-close-student-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="student-form" novalidate>
+        <div class="form-group">
+          <label for="student-id-input">Mã sinh viên <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="student-id-input" 
+            name="studentId" 
+            placeholder="VD: SV2026001 (6-12 ký tự chữ và số)" 
+            maxlength="12" 
+            required 
+            aria-describedby="student-id-error"
+          >
+          <span id="student-id-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="student-name-input">Họ và tên <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="student-name-input" 
+            name="fullName" 
+            placeholder="VD: Nguyễn Văn An" 
+            maxlength="100" 
+            required 
+            aria-describedby="student-name-error"
+          >
+          <span id="student-name-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="student-class-input">Lớp (tùy chọn)</label>
+          <input 
+            type="text" 
+            id="student-class-input" 
+            name="className" 
+            placeholder="VD: CNTT-K24A" 
+            maxlength="50"
+          >
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-student">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-student">Lưu thông tin</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Thêm/Sửa Định mức Tín chỉ -->
+  <dialog id="modal-rate" aria-labelledby="modal-rate-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-rate-title">Thêm định mức tín chỉ</h2>
+        <button type="button" class="btn-close" id="btn-close-rate-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="rate-form" novalidate>
+        <input type="hidden" id="rate-edit-id">
+        <div class="form-group">
+          <label for="rate-semester-input">Học kỳ áp dụng <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="rate-semester-input" 
+            name="semester" 
+            placeholder="VD: Học kỳ 1 - Năm học 2026-2027" 
+            required 
+            aria-describedby="rate-semester-error"
+          >
+          <span id="rate-semester-error" class="error-msg" aria-live="polite"></span>
+          <small class="form-hint">Định dạng chuẩn: "Học kỳ [X] - Năm học [YYYY-YYYY]"</small>
+        </div>
+
+        <div class="form-group">
+          <label for="rate-price-input">Đơn giá mỗi tín chỉ (VND) <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="rate-price-input" 
+            name="pricePerCredit" 
+            placeholder="VD: 450.000 hoặc 450000" 
+            inputmode="numeric" 
+            required 
+            aria-describedby="rate-price-error"
+          >
+          <span id="rate-price-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-rate">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-rate">Lưu định mức</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Lập / Chỉnh sửa Hồ sơ Học phí (Module 2) -->
+  <dialog id="modal-fee" aria-labelledby="modal-fee-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-fee-title">Lập hồ sơ học phí</h2>
+        <button type="button" class="btn-close" id="btn-close-fee-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="fee-form" novalidate>
+        <input type="hidden" id="fee-edit-id">
+
+        <div class="form-group">
+          <label for="fee-student-select">Sinh viên <span class="required">*</span></label>
+          <select id="fee-student-select" name="studentId" required aria-describedby="fee-student-error">
+            <option value="">-- Chọn sinh viên --</option>
+          </select>
+          <span id="fee-student-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="fee-semester-select">Học kỳ <span class="required">*</span></label>
+          <select id="fee-semester-select" name="semester" required aria-describedby="fee-semester-error">
+            <option value="">-- Chọn học kỳ có định mức --</option>
+          </select>
+          <span id="fee-semester-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col-half">
+            <label for="fee-credits-input">Số tín chỉ đăng ký <span class="required">*</span></label>
+            <input 
+              type="number" 
+              id="fee-credits-input" 
+              name="registeredCredits" 
+              min="1" 
+              max="50" 
+              step="1" 
+              required 
+              aria-describedby="fee-credits-error"
+            >
+            <span id="fee-credits-error" class="error-msg" aria-live="polite"></span>
+          </div>
+
+          <div class="form-group col-half">
+            <label for="fee-rate-display">Đơn giá / TC (Rate Snapshot)</label>
+            <input type="text" id="fee-rate-display" readonly class="form-control-readonly">
+          </div>
+        </div>
+
+        <!-- Bảng tính nhẩm tự động -->
+        <div class="calc-preview-box">
+          <div class="calc-row">
+            <span>Học phí gốc (Tín chỉ × Đơn giá):</span>
+            <strong id="fee-gross-preview">0 ₫</strong>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-fee">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-fee">Lưu hồ sơ</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Áp dụng / Chỉnh sửa Miễn giảm Học phí (Module 3) -->
+  <dialog id="modal-exemption" aria-labelledby="modal-exemption-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-exemption-title">Thiết lập Miễn giảm Học phí</h2>
+        <button type="button" class="btn-close" id="btn-close-exemption-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="exemption-form" novalidate>
+        <input type="hidden" id="exemption-fee-id">
+
+        <div class="info-card">
+          <p>Sinh viên: <strong id="exemption-student-name">...</strong></p>
+          <p>Học kỳ: <strong id="exemption-semester">...</strong></p>
+          <p>Học phí gốc: <strong id="exemption-gross-tuition">0 ₫</strong></p>
+          <p>Số tiền đã nộp thực tế: <strong id="exemption-already-paid">0 ₫</strong></p>
+        </div>
+
+        <div class="form-group">
+          <label>Hình thức miễn giảm <span class="required">*</span></label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="exemptionType" value="percentage" checked id="radio-exempt-percent">
+              Theo tỷ lệ phần trăm (1 - 100%)
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="exemptionType" value="fixed" id="radio-exempt-fixed">
+              Số tiền cố định (VND)
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" id="group-exempt-value">
+          <label for="exemption-value-input" id="exemption-value-label">Mức giảm (%): <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="exemption-value-input" 
+            name="exemptionValue" 
+            placeholder="VD: 20 hoặc 1.000.000" 
+            required 
+            aria-describedby="exemption-value-error"
+          >
+          <span id="exemption-value-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="exemption-reason-input">Lý do miễn giảm (tối đa 200 ký tự) <span class="required">*</span></label>
+          <textarea 
+            id="exemption-reason-input" 
+            name="reason" 
+            rows="3" 
+            maxlength="200" 
+            placeholder="VD: Học bổng khuyến khích học tập kỳ 1" 
+            required 
+            aria-describedby="exemption-reason-error"
+          ></textarea>
+          <span id="exemption-reason-error" class="error-msg" aria-live="polite"></span>
+          <div class="char-count"><span id="exemption-char-num">0</span>/200 ký tự</div>
+        </div>
+
+        <!-- Tính toán trực quan -->
+        <div class="calc-preview-box">
+          <div class="calc-row">
+            <span>Số tiền được giảm:</span>
+            <strong id="exempt-calc-amount">0 ₫</strong>
+          </div>
+          <div class="calc-row">
+            <span>Số tiền phải nộp sau miễn giảm (Net Due):</span>
+            <strong id="exempt-calc-net">0 ₫</strong>
+          </div>
+          <div id="exempt-overpaid-warning" class="alert-box alert-warning mt-2" hidden>
+            ⚠️ <strong>Cảnh báo nộp thừa:</strong> Mức miễn giảm mới làm số tiền phải nộp nhỏ hơn số tiền sinh viên đã đóng (<span id="exempt-warning-paid">0 ₫</span>). Hồ sơ sẽ chuyển sang cảnh báo "Thừa tiền" và chặn nộp thêm cho đến khi thực hiện hoàn tiền!
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-danger" id="btn-remove-exemption" hidden>Xóa miễn giảm</button>
+          <button type="button" class="btn btn-secondary" id="btn-cancel-exemption">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-exemption">Áp dụng miễn giảm</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Thu Học phí (Module 4) -->
+  <dialog id="modal-payment" aria-labelledby="modal-payment-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-payment-title">Lập Phiếu Thu Học Phí</h2>
+        <button type="button" class="btn-close" id="btn-close-payment-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="payment-form" novalidate>
+        <div class="form-group">
+          <label for="payment-fee-select">Chọn hồ sơ học phí <span class="required">*</span></label>
+          <select id="payment-fee-select" name="feeRecordId" required aria-describedby="payment-fee-error">
+            <option value="">-- Chọn sinh viên và học kỳ cần nộp --</option>
+          </select>
+          <span id="payment-fee-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <!-- Chi tiết công nợ của hồ sơ đã chọn -->
+        <div id="payment-fee-detail-box" class="info-card" hidden>
+          <div class="info-grid">
+            <div>Sinh viên: <strong id="pay-detail-student">...</strong></div>
+            <div>Học kỳ: <strong id="pay-detail-semester">...</strong></div>
+            <div>Phải nộp (Net): <strong id="pay-detail-net">0 ₫</strong></div>
+            <div>Đã nộp trước đó: <strong id="pay-detail-paid">0 ₫</strong></div>
+            <div class="col-full text-highlight">
+              Số tiền còn nợ hiện tại: <strong id="pay-detail-balance">0 ₫</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="payment-amount-input">Số tiền nộp (VND) <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="payment-amount-input" 
+            name="amount" 
+            placeholder="VD: 3.000.000" 
+            inputmode="numeric" 
+            required 
+            aria-describedby="payment-amount-error"
+          >
+          <span id="payment-amount-error" class="error-msg" aria-live="polite"></span>
+          <div class="quick-fill-row mt-1">
+            <button type="button" id="btn-pay-full" class="btn btn-sm btn-outline-primary" style="display:none;">
+              Nộp đủ số còn nợ (<span id="pay-full-text">0 ₫</span>)
+            </button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group col-half">
+            <label for="payment-date-input">Ngày nộp <span class="required">*</span></label>
+            <input 
+              type="date" 
+              id="payment-date-input" 
+              name="paymentDate" 
+              required 
+              aria-describedby="payment-date-error"
+            >
+            <span id="payment-date-error" class="error-msg" aria-live="polite"></span>
+          </div>
+
+          <div class="form-group col-half">
+            <label for="payment-method-select">Phương thức thanh toán <span class="required">*</span></label>
+            <select id="payment-method-select" name="method" required>
+              <option value="Chuyển khoản">Chuyển khoản</option>
+              <option value="Tiền mặt">Tiền mặt</option>
+              <option value="Thẻ">Thẻ</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="payment-note-input">Ghi chú (tùy chọn)</label>
+          <input 
+            type="text" 
+            id="payment-note-input" 
+            name="note" 
+            placeholder="VD: Nộp đợt 1 qua ngân hàng Vietcombank" 
+            maxlength="200"
+          >
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-payment">Hủy</button>
+          <button type="submit" class="btn btn-success" id="btn-save-payment">Ghi nhận phiếu thu</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Lập Yêu cầu Hoàn tiền (Module 4) -->
+  <dialog id="modal-refund" aria-labelledby="modal-refund-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-refund-title">Lập Yêu cầu Hoàn tiền Học phí</h2>
+        <button type="button" class="btn-close" id="btn-close-refund-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="refund-form" novalidate>
+        <input type="hidden" id="refund-fee-id">
+
+        <div class="info-card">
+          <p>Sinh viên: <strong id="refund-student-name">...</strong></p>
+          <p>Học kỳ: <strong id="refund-semester">...</strong></p>
+          <p>Số tiền đã nộp: <strong id="refund-paid-amount">0 ₫</strong></p>
+          <p>Phải nộp thực tế: <strong id="refund-net-amount">0 ₫</strong></p>
+          <p class="text-highlight">Số tiền nộp thừa tối đa có thể hoàn: <strong id="refund-max-amount">0 ₫</strong></p>
+        </div>
+
+        <div class="form-group">
+          <label for="refund-amount-input">Số tiền hoàn (VND) <span class="required">*</span></label>
+          <input 
+            type="text" 
+            id="refund-amount-input" 
+            name="refundAmount" 
+            placeholder="VD: 500.000" 
+            inputmode="numeric" 
+            required 
+            aria-describedby="refund-amount-error"
+          >
+          <span id="refund-amount-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="refund-reason-input">Lý do hoàn tiền <span class="required">*</span></label>
+          <textarea 
+            id="refund-reason-input" 
+            name="refundReason" 
+            rows="3" 
+            maxlength="200" 
+            placeholder="VD: Hoàn tiền thừa sau khi áp dụng học bổng miễn giảm" 
+            required 
+            aria-describedby="refund-reason-error"
+          ></textarea>
+          <span id="refund-reason-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-refund">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-refund">Tạo yêu cầu hoàn tiền</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Đảo mục Giao dịch (Reversal Entry) -->
+  <dialog id="modal-reversal" aria-labelledby="modal-reversal-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-reversal-title">Đảo mục Giao dịch (Hủy ghi nhận)</h2>
+        <button type="button" class="btn-close" id="btn-close-reversal-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="reversal-form" novalidate>
+        <input type="hidden" id="reversal-tx-id">
+
+        <div class="alert-box alert-warning">
+          ⚠️ <strong>Quy định bảo toàn dữ liệu:</strong> Giao dịch không bị xóa khỏi sổ quỹ. Hệ thống sẽ tạo một bút toán đảo mục (Reversal Entry) để triệt tiêu số dư của giao dịch này trong lịch sử.
+        </div>
+
+        <div class="info-card">
+          <p>Mã / Số biên lai: <strong id="reversal-receipt-no">...</strong></p>
+          <p>Loại giao dịch gốc: <strong id="reversal-orig-type">...</strong></p>
+          <p>Số tiền: <strong id="reversal-amount">0 ₫</strong></p>
+        </div>
+
+        <div class="form-group">
+          <label for="reversal-reason-input">Lý do đảo mục (bắt buộc) <span class="required">*</span></label>
+          <textarea 
+            id="reversal-reason-input" 
+            name="reversalReason" 
+            rows="3" 
+            maxlength="200" 
+            placeholder="VD: Nhập nhầm số tiền thanh toán, lập bút toán đảo để thu lại đúng số tiền" 
+            required 
+            aria-describedby="reversal-reason-error"
+          ></textarea>
+          <span id="reversal-reason-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-reversal">Hủy</button>
+          <button type="submit" class="btn btn-danger" id="btn-confirm-reversal">Xác nhận Đảo mục</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Xác nhận Thao tác Nguy hiểm (Hộp thoại xác nhận dùng chung) -->
+  <dialog id="modal-confirm" aria-labelledby="modal-confirm-title" aria-describedby="modal-confirm-desc">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-confirm-title">Xác nhận thao tác</h2>
+        <button type="button" class="btn-close" id="btn-close-confirm-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-confirm-desc">Bạn có chắc chắn muốn thực hiện thao tác này?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-confirm-cancel" autofocus>Hủy bỏ</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-proceed">Đồng ý</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ==================== KHU VỰC IN BIÊN LAI (PRINTABLE RECEIPT VIEW) ==================== -->
+  <div id="receipt-print-area" class="receipt-print-area" hidden>
+    <div class="receipt-card">
+      <button type="button" class="receipt-close-btn no-print" id="btn-close-receipt-top" aria-label="Đóng biên lai">&times;</button>
+      <div class="receipt-header">
+        <div class="receipt-school-block">
+          <h2 class="school-name">[Tên trường]</h2>
+          <p class="school-sub">PHÒNG TÀI CHÍNH - KẾ TOÁN</p>
+          <p class="school-contact">Hệ thống Quản lý Học phí Sinh viên</p>
+        </div>
+        <div class="receipt-voucher-block">
+          <h1 class="receipt-title">BIÊN LAI THU TIỀN HỌC PHÍ</h1>
+          <p class="receipt-no-tag">Số biên lai: <strong id="pr-receipt-no">PT-00000000-0000</strong></p>
+          <p class="receipt-date-tag">Ngày thu: <span id="pr-date">dd/mm/yyyy</span></p>
+        </div>
+      </div>
+
+      <div class="receipt-divider"></div>
+
+      <div class="receipt-body">
+        <table class="receipt-info-table">
+          <tbody>
+            <tr>
+              <th scope="row">Họ và tên sinh viên:</th>
+              <td><strong id="pr-student-name">...</strong></td>
+              <th scope="row">Mã sinh viên:</th>
+              <td><strong id="pr-student-id">...</strong></td>
+            </tr>
+            <tr>
+              <th scope="row">Lớp chuyên ngành:</th>
+              <td><span id="pr-student-class">...</span></td>
+              <th scope="row">Học kỳ nộp:</th>
+              <td><strong id="pr-semester">...</strong></td>
+            </tr>
+            <tr>
+              <th scope="row">Hình thức thanh toán:</th>
+              <td><span id="pr-method">Chuyển khoản</span></td>
+              <th scope="row">Người thu tiền:</th>
+              <td><span id="pr-admin-name">Admin</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="receipt-amount-box">
+          <div class="amount-row">
+            <span>SỐ TIỀN ĐÃ THU:</span>
+            <strong class="amount-vnd" id="pr-amount-vnd">0 ₫</strong>
+          </div>
+          <div class="words-row">
+            <span>Số tiền viết bằng chữ:</span>
+            <em id="pr-amount-words">Không đồng chẵn</em>
+          </div>
+        </div>
+
+        <div class="receipt-balance-summary">
+          <span>Số dư học phí còn nợ của học kỳ này sau khi thu:</span>
+          <strong id="pr-remaining-balance">0 ₫</strong>
+        </div>
+
+        <div class="receipt-signatures">
+          <div class="sig-block">
+            <strong>Người nộp tiền</strong>
+            <p class="sig-hint">(Ký và ghi rõ họ tên)</p>
+            <div class="sig-space"></div>
+          </div>
+          <div class="sig-block">
+            <strong>Người lập phiếu</strong>
+            <p class="sig-hint">(Ký, đóng dấu và ghi rõ họ tên)</p>
+            <div class="sig-space"></div>
+            <strong id="pr-signer-name">Admin</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="receipt-footer-note">
+        <p><em>(Biên lai có giá trị xác nhận nghĩa vụ tài chính học phí sinh viên theo quy chế đào tạo)</em></p>
+      </div>
+    </div>
+
+    <!-- Nút điều khiển khi xem trên màn hình trước khi in -->
+    <div class="receipt-screen-actions no-print">
+      <button type="button" id="btn-trigger-print" class="btn btn-primary">🖨️ In Biên lai ngay</button>
+      <button type="button" id="btn-close-receipt-view" class="btn btn-secondary">Đóng xem trước</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="app.js"></script>
+  <script src="../tests/tests.js"></script>
+</body>
+</html>
