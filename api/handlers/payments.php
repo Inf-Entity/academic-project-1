@@ -83,12 +83,9 @@ function handle_payments_routes(string $method, string $path, array $matches): v
             }
 
             // 2. Đọc tổng số nợ và số đã nộp thực tế sau khi đã lock
-            $sumStmt = $pdo->prepare("SELECT net_due, total_paid FROM v_fee_record_summaries WHERE fee_record_id = :id");
-            $sumStmt->execute(['id' => $feeRecordId]);
-            $summary = $sumStmt->fetch();
-
-            $netDue = (int)$summary['net_due'];
-            $totalPaid = (int)$summary['total_paid'];
+            $summary = fetch_fee_record_summary($pdo, $feeRecordId);
+            $netDue = (int)($summary['net_due'] ?? 0);
+            $totalPaid = (int)($summary['total_paid'] ?? 0);
 
             // 3. Quy tắc từ chối nộp thừa
             if (($totalPaid + $amount) > $netDue) {

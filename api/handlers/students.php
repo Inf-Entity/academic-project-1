@@ -114,13 +114,14 @@ function handle_students_routes(string $method, string $path, array $matches): v
         }
 
         // Lấy tất cả hồ sơ học phí của sinh viên kèm thông tin học kỳ và tính toán
+        $feeSub = get_fee_summary_subquery();
         $feeStmt = $db->prepare(
             "SELECT 
                 v.*,
                 sem.term_no,
                 sem.academic_year_start,
                 CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
-             FROM v_fee_record_summaries v
+             FROM {$feeSub} v
              JOIN semesters sem ON v.semester_id = sem.id
              WHERE v.student_id = :student_id
              ORDER BY sem.academic_year_start DESC, sem.term_no DESC"

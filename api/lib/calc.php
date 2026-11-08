@@ -145,3 +145,77 @@ function number_to_vietnamese_words(int $amount): string {
     $restChars = mb_substr($words, 1, null, 'UTF-8');
     return mb_strtoupper($firstChar, 'UTF-8') . $restChars . ' đồng chẵn';
 }
+
+/**
+ * Trả về câu truy vấn con (subquery) tổng hợp thông tin học phí, công nợ thay thế View v_fee_record_summaries
+ */
+function get_fee_summary_subquery(): string {
+    return "(
+        SELECT 
+            fr.id AS fee_record_id,
+            fr.student_id,
+            fr.semester_id,
+            fr.registered_credits,
+            fr.rate_snapshot,
+            fr.gross_tuition,
+            ex.id AS exemption_id,
+            ex.type AS exemption_type,
+            ex.value AS exemption_value,
+            ex.reason AS exemption_reason,
+            CASE 
+                WHEN ex.type = 'percent' THEN ROUND(fr.gross_tuition * ex.value / 100)
+                WHEN ex.type = 'fixed' THEN LEAST(fr.gross_tuition, ex.value)
+                ELSE 0
+            END AS exemption_amount,
+            GREATEST(0, fr.gross_tuition - (
+                CASE 
+                    WHEN ex.type = 'percent' THEN ROUND(fr.gross_tuition * ex.value / 100)
+                    WHEN ex.type = 'fixed' THEN LEAST(fr.gross_tuition, ex.value)
+                    ELSE 0
+                END
+            )) AS net_due,
+            COALESCE(p.payments_sum, 0) AS payments_sum,
+            COALESCE(r.reversals_sum, 0) AS reversals_sum,
+            COALESCE(rf_comp.completed_refunds_sum, 0) AS completed_refunds_sum,
+            COALESCE(rf_pend.pending_refunds_sum, 0) AS pending_refunds_sum,
+            (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0)) AS total_paid
+        FROM fee_records fr
+        LEFT JOIN exemptions ex ON fr.id = ex.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS payments_sum
+            FROM ledger_entries
+            WHERE entry_type = 'payment'
+            GROUP BY fee_record_id
+        ) p ON fr.id = p.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS reversals_sum
+            FROM ledger_entries
+            WHERE entry_type = 'reversal'
+            GROUP BY fee_record_id
+        ) r ON fr.id = r.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS completed_refunds_sum
+            FROM refund_requests
+            WHERE status = 'completed'
+            GROUP BY fee_record_id
+        ) rf_comp ON fr.id = rf_comp.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS pending_refunds_sum
+            FROM refund_requests
+            WHERE status = 'pending'
+            GROUP BY fee_record_id
+        ) rf_pend ON fr.id = rf_pend.fee_record_id
+    )";
+}
+
+/**
+ * Lấy bản ghi tổng hợp công nợ của 1 hồ sơ học phí theo fee_record_id
+ */
+function fetch_fee_record_summary(PDO $pdo, int $feeRecordId): ?array {
+    $sub = get_fee_summary_subquery();
+    $stmt = $pdo->prepare("SELECT * FROM {$sub} v WHERE v.fee_record_id = :id");
+    $stmt->execute(['id' => $feeRecordId]);
+    $res = $stmt->fetch();
+    return $res ?: null;
+}
+

@@ -24,7 +24,8 @@ function handle_history_routes(string $method, string $path): void {
         $to = trim((string)($_GET['to'] ?? ''));
         $statusFilter = trim((string)($_GET['status'] ?? ($_GET['type'] ?? '')));
 
-        // Truy vấn danh sách giao dịch từ ledger_entries kèm v_fee_record_summaries để lấy công nợ
+        // Truy vấn danh sách giao dịch từ ledger_entries kèm subquery tổng hợp công nợ
+        $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
                     l.id,
                     l.fee_record_id,
@@ -52,7 +53,7 @@ function handle_history_routes(string $method, string $path): void {
                 JOIN fee_records fr ON l.fee_record_id = fr.id
                 JOIN students s ON fr.student_id = s.id
                 JOIN semesters sem ON fr.semester_id = sem.id
-                JOIN v_fee_record_summaries v ON fr.id = v.fee_record_id
+                JOIN {$feeSub} v ON fr.id = v.fee_record_id
                 LEFT JOIN users u ON l.created_by = u.id
                 WHERE 1=1";
         $params = [];

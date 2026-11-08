@@ -17,6 +17,7 @@ function handle_receipts_routes(string $method, string $path, array $matches): v
         $entryId = (int)$m[1];
         $db = get_db_connection();
 
+        $feeSub = get_fee_summary_subquery();
         $stmt = $db->prepare(
             "SELECT 
                 l.id, l.fee_record_id, l.entry_type, l.amount, l.method, l.entry_date, l.receipt_no, l.note, l.created_at,
@@ -29,7 +30,7 @@ function handle_receipts_routes(string $method, string $path, array $matches): v
              JOIN fee_records fr ON l.fee_record_id = fr.id
              JOIN students s ON fr.student_id = s.id
              JOIN semesters sem ON fr.semester_id = sem.id
-             JOIN v_fee_record_summaries v ON fr.id = v.fee_record_id
+             JOIN {$feeSub} v ON fr.id = v.fee_record_id
              LEFT JOIN users u ON l.created_by = u.id
              WHERE l.id = :id"
         );

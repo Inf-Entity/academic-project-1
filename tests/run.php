@@ -176,14 +176,11 @@ try {
 }
 
 function reset_test_database(PDO $pdo): void {
+    $pdo->exec("USE `tuition_test`;");
     $schemaSql = file_get_contents(dirname(__DIR__) . '/database/schema.sql');
-    $schemaSql = str_replace('`tuition_system`', '`tuition_test`', $schemaSql);
-    $schemaSql = str_replace('USE `tuition_system`;', 'USE `tuition_test`;', $schemaSql);
     $pdo->exec($schemaSql);
 
     $seedSql = file_get_contents(dirname(__DIR__) . '/database/seed.sql');
-    $seedSql = str_replace('`tuition_system`', '`tuition_test`', $seedSql);
-    $seedSql = str_replace('USE `tuition_system`;', 'USE `tuition_test`;', $seedSql);
     $pdo->exec($seedSql);
 
     $phpExe = 'C:\\xampp\\php\\php.exe';
@@ -258,7 +255,7 @@ it("Net Due chặn dưới tại 0 không bao giờ âm", $netDueFloor === 0, 0,
 // ----------------------------------------------------------------------------
 suite_header("2. Quy tắc nộp thừa & bảo toàn dữ liệu (Overpayment Rejection)");
 
-$fee2 = $pdo->query("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = 2")->fetch();
+$fee2 = fetch_fee_record_summary($pdo, 2);
 $balanceFee2 = (int)$fee2['net_due'] - (int)$fee2['total_paid'];
 it("Hồ sơ #2 còn nợ đúng 10.300.000 VND", $balanceFee2 === 10300000, 10300000, $balanceFee2);
 
@@ -292,7 +289,7 @@ it("API chấp nhận nộp đúng bằng số nợ còn lại (HTTP 201 Created
     $payExactRes['status'] === 201 && !empty($payExactRes['body']['data']['receipt_no'])
 );
 
-$fee2After = $pdo->query("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = 2")->fetch();
+$fee2After = fetch_fee_record_summary($pdo, 2);
 it("Sau khi nộp đủ, hồ sơ #2 có total_paid = net_due và outstanding = 0", 
     (int)$fee2After['total_paid'] === (int)$fee2After['net_due']
 );
@@ -372,7 +369,7 @@ $pdo->exec("UPDATE credit_rates SET price_per_credit = 850000 WHERE semester_id 
 // ----------------------------------------------------------------------------
 suite_header("5. Quy trình hoàn tiền & kiểm soát nộp thừa (Refund Lifecycle)");
 
-$fee5 = $pdo->query("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = 5")->fetch();
+$fee5 = fetch_fee_record_summary($pdo, 5);
 it("Hồ sơ #5 nộp thừa 1.000.000 (total_paid 8.2M, net 7.2M)", 
     (int)$fee5['total_paid'] === 8200000 && (int)$fee5['net_due'] === 7200000
 );
@@ -393,7 +390,7 @@ it("Duyệt hoàn tất yêu cầu hoàn tiền #1 qua API thành công (HTTP 20
     $compRefundRes['status'] === 200 && ($compRefundRes['body']['data']['status'] ?? '') === 'completed'
 );
 
-$fee5Completed = $pdo->query("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = 5")->fetch();
+$fee5Completed = fetch_fee_record_summary($pdo, 5);
 it("Sau khi duyệt hoàn tất, total_paid giảm từ 8.2M xuống đúng 7.2M", 
     (int)$fee5Completed['total_paid'] === 7200000, 7200000, (int)$fee5Completed['total_paid']
 );
@@ -408,7 +405,7 @@ it("Trạng thái chuyển thành 'Fully Paid' và không còn nộp thừa",
 // ----------------------------------------------------------------------------
 suite_header("6. Bút toán đảo mục (Reversal Lifecycle)");
 
-$fee7 = $pdo->query("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = 7")->fetch();
+$fee7 = fetch_fee_record_summary($pdo, 7);
 it("Hồ sơ #7 có total_paid = 0 sau khi thanh toán được đảo mục", 
     (int)$fee7['total_paid'] === 0, 0, (int)$fee7['total_paid']
 );
@@ -512,7 +509,7 @@ require_once '{$projectRoot}/api/lib/calc.php';
 try {
     \$res = db_transaction(function(PDO \$pdo) use (\$feeId, \$amount, \$reqId) {
         \$pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => \$feeId]);
-        \$sum = \$pdo->query("SELECT net_due, total_paid FROM v_fee_record_summaries WHERE fee_record_id = {\$feeId}")->fetch();
+        \$sum = fetch_fee_record_summary(\$pdo, \$feeId);
         \$net = (int)\$sum['net_due'];
         \$paid = (int)\$sum['total_paid'];
         if ((\$paid + \$amount) > \$net) {

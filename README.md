@@ -132,17 +132,28 @@ Mở **XAMPP Control Panel**, nhấn nút **Start** cho cả 2 dịch vụ:
 ### Bước 3: Nạp cơ sở dữ liệu (Chọn 1 trong 2 cách)
 Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồm toàn bộ cấu trúc bảng (schema), dữ liệu mẫu (seed data) và tự động tạo tài khoản kết nối. Bạn chỉ cần nạp duy nhất tệp này:
 
-- **Cách 1: Sử dụng phpMyAdmin (Dễ nhất - Không cần dùng lệnh)**:
+- **Cách 1: Sử dụng phpMyAdmin (Nhập chuẩn theo thứ tự từng phần)**:
   1. Mở trình duyệt web và vào địa chỉ: [http://localhost/phpmyadmin/](http://localhost/phpmyadmin/)
-  2. Bấm vào tab **Nhập** (hoặc **Import**) trên thanh menu trên cùng.
-  3. Tại mục **Tập tin cần nhập**, bấm **Choose File** (hoặc **Chọn tệp**) và chọn tệp `database/database.sql` trong thư mục dự án.
-  4. Cuộn xuống cuối trang và bấm nút **Thực hiện** (hoặc **Import** / **Go**). Quá trình nạp CSDL hoàn tất sau vài giây!
+  2. Tạo cơ sở dữ liệu `tuition_system` với bảng mã `utf8mb4_unicode_ci` (nếu chưa có).
+  3. Chọn cơ sở dữ liệu `tuition_system` ở danh sách bên trái.
+  4. Bấm tab **Nhập** (Import) và thực hiện nhập lần lượt các tệp theo đúng thứ tự:
+     - **Bước 1:** Nhập `database/schema.sql` (Khởi tạo cấu trúc bảng, khóa ngoại RESTRICT, chỉ mục).
+     - **Bước 2:** Nhập `database/create_app_user.sql` (Tạo người dùng `tuition_user` với quyền tối thiểu).
+     - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ).
+  5. Mở Terminal / PowerShell và chạy lệnh CLI để khởi tạo tài khoản quản trị viên:
+     ```bash
+     php database/seed_users.php
+     ```
+  *(Lưu ý: Bạn có thể re-import `schema.sql` và `seed.sql` nhiều lần liên tiếp mà không gặp lỗi).*
 
-- **Cách 2: Sử dụng dòng lệnh 1 chạm (Nhanh nhất cho Terminal)**:
-  Mở Terminal / PowerShell và chạy duy nhất lệnh sau:
-  ```bash
-  mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/database.sql"
-  ```
+- **Cách 2: Sử dụng tệp hợp nhất `database/database.sql` hoặc dòng lệnh nhanh**:
+  - **phpMyAdmin**: Chọn database `tuition_system`, Import tệp hợp nhất `database/database.sql`, sau đó chạy `php database/seed_users.php`.
+  - **Dòng lệnh Terminal / PowerShell**:
+    ```bash
+    mysql -u root -e "CREATE DATABASE IF NOT EXISTS tuition_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    mysql -u root tuition_system -e "source C:/xampp/htdocs/tuition-system/database/database.sql"
+    php database/seed_users.php
+    ```
 
 ---
 

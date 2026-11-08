@@ -55,9 +55,7 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
         $result = db_transaction(function(PDO $pdo) use ($feeRecordId, $amount, $reason, $requestId, $userId) {
             $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => $feeRecordId]);
 
-            $sumStmt = $pdo->prepare("SELECT net_due, total_paid, pending_refunds_sum FROM v_fee_record_summaries WHERE fee_record_id = :id");
-            $sumStmt->execute(['id' => $feeRecordId]);
-            $sum = $sumStmt->fetch();
+            $sum = fetch_fee_record_summary($pdo, $feeRecordId);
             if (!$sum) {
                 json_error('Không tìm thấy hồ sơ học phí.', 'NOT_FOUND', 404);
             }
@@ -137,9 +135,8 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
             $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => $feeRecordId]);
 
             // Re-check total_paid to ensure refund does not make total_paid negative
-            $sumStmt = $pdo->prepare("SELECT total_paid FROM v_fee_record_summaries WHERE fee_record_id = :id");
-            $sumStmt->execute(['id' => $feeRecordId]);
-            $currentTotalPaid = (int)$sumStmt->fetchColumn();
+            $sum = fetch_fee_record_summary($pdo, $feeRecordId);
+            $currentTotalPaid = (int)($sum['total_paid'] ?? 0);
 
             if (($currentTotalPaid - (int)$refund['amount']) < 0) {
                 json_error('Không thể hoàn tất hoàn tiền vì số dư đã nộp không đủ.', 'NEGATIVE_TOTAL_PAID', 422);

@@ -23,12 +23,13 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $semesterFilter = $_GET['semester'] ?? ($_GET['semester_id'] ?? null);
         $statusFilter = $_GET['status'] ?? null;
 
+        $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
                     v.*,
                     s.student_code, s.full_name, s.class_name,
                     sem.term_no, sem.academic_year_start,
                     CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
-                FROM v_fee_record_summaries v
+                FROM {$feeSub} v
                 JOIN students s ON v.student_id = s.id
                 JOIN semesters sem ON v.semester_id = sem.id
                 WHERE 1=1";
@@ -145,9 +146,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         ]);
 
         // Trả về dữ liệu chi tiết
-        $res = $db->prepare("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = :id");
-        $res->execute(['id' => $newId]);
-        $r = $res->fetch();
+        $r = fetch_fee_record_summary($db, $newId);
         $statusInfo = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
         json_success(array_merge($r, $statusInfo), 201);
     }
@@ -228,9 +227,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
             'reason' => $reason
         ]);
 
-        $res = $db->prepare("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = :id");
-        $res->execute(['id' => $feeRecordId]);
-        $r = $res->fetch();
+        $r = fetch_fee_record_summary($db, $feeRecordId);
         $statusInfo = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
         json_success(array_merge($r, $statusInfo));
     }
@@ -245,9 +242,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
 
         log_audit(null, 'delete_exemption', 'exemptions', (string)$feeRecordId);
 
-        $res = $db->prepare("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = :id");
-        $res->execute(['id' => $feeRecordId]);
-        $r = $res->fetch();
+        $r = fetch_fee_record_summary($db, $feeRecordId);
         $statusInfo = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
         json_success(array_merge($r, $statusInfo));
     }
@@ -295,9 +290,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
             'new_gross'   => $newGross
         ]);
 
-        $res = $db->prepare("SELECT * FROM v_fee_record_summaries WHERE fee_record_id = :id");
-        $res->execute(['id' => $feeRecordId]);
-        $r = $res->fetch();
+        $r = fetch_fee_record_summary($db, $feeRecordId);
         $statusInfo = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
         json_success(array_merge($r, $statusInfo));
     }
@@ -306,13 +299,14 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
     if (preg_match('#^/api/fee-records/(\d+)$#', $path, $m) && $method === 'GET') {
         $feeRecordId = (int)$m[1];
 
+        $feeSub = get_fee_summary_subquery();
         $stmt = $db->prepare(
             "SELECT 
                 v.*,
                 s.student_code, s.full_name, s.class_name,
                 sem.term_no, sem.academic_year_start,
                 CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
-             FROM v_fee_record_summaries v
+             FROM {$feeSub} v
              JOIN students s ON v.student_id = s.id
              JOIN semesters sem ON v.semester_id = sem.id
              WHERE v.fee_record_id = :id"

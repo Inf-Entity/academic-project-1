@@ -18,11 +18,12 @@ function handle_reports_routes(string $method, string $path): void {
     if ($path === '/api/reports/summary' && $method === 'GET') {
         $semesterFilter = $_GET['semester'] ?? ($_GET['semester_id'] ?? null);
 
+        $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
                     v.*,
                     sem.term_no, sem.academic_year_start,
                     CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
-                FROM v_fee_record_summaries v
+                FROM {$feeSub} v
                 JOIN semesters sem ON v.semester_id = sem.id
                 WHERE 1=1";
         $params = [];
