@@ -1,21 +1,25 @@
-# Dependencies
-node_modules/
-
 # Environment variables
 .env
 .env.*
 
-# Build output
-dist/
-build/
+# Local database configuration
+backend/config/database.local.php
 
-# IDE settings
+# XAMPP temporary files
+*.log
+tmp/
+
+# IDE
 .vscode/
 .idea/
 
-# System files
+# Operating system
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Dependencies
+vendor/
+node_modules/
+
+# Temporary files
+*.tmp

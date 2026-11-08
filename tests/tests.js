@@ -250,10 +250,12 @@
     document.body.appendChild(banner);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mountTestBanner);
-  } else {
-    mountTestBanner();
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', mountTestBanner);
+    } else {
+      mountTestBanner();
+    }
   }
 
 })();

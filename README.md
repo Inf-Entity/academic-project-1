@@ -1,119 +1,288 @@
-# Hệ thống Quản lý Học phí Sinh viên (Student Tuition Management System)
+# Hệ thống Quản lý Học phí Sinh viên
 
-Ứng dụng Frontend độc lập, hoàn chỉnh để quản lý học phí, định mức tín chỉ, chính sách miễn giảm, thu tiền, quy trình hoàn tiền, đối soát công nợ và in biên lai thu học phí bằng tiếng Việt.
+Ứng dụng quản lý học phí sinh viên được xây dựng trên **PHP 8.1+**, **MySQL/MariaDB** và giao diện **HTML, CSS, JavaScript thuần**. Dự án hướng đến mô hình triển khai cục bộ bằng XAMPP, không yêu cầu npm, framework frontend, CDN bên ngoài hoặc bước build.
 
-Xây dựng 100% bằng **HTML5, CSS3 và Vanilla JavaScript (ES6+) thuần túy**, không sử dụng framework, không thư viện bên ngoài, không build tool và không cần cài đặt backend.
+Các thao tác xác thực, phân quyền, truy cập dữ liệu và xử lý nghiệp vụ tài chính được thực hiện ở phía máy chủ. Frontend giao tiếp với backend thông qua API.
 
-![HTML5](https://img.shields.io/badge/HTML5-orange?logo=html5)
-![CSS3](https://img.shields.io/badge/CSS3-blue?logo=css3)
-![JavaScript](https://img.shields.io/badge/JavaScript-ES2020-yellow?logo=javascript)
-![License](https://img.shields.io/badge/License-MIT-green)
+## Mục lục
 
----
+- [Tổng quan](#tổng-quan)
+- [Công nghệ sử dụng](#công-nghệ-sử-dụng)
+- [Cấu trúc dự án](#cấu-trúc-dự-án)
+- [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
+- [Cài đặt và chạy ứng dụng](#cài-đặt-và-chạy-ứng-dụng)
+- [Tài khoản dùng thử](#tài-khoản-dùng-thử)
+- [Chạy kiểm thử tự động](#chạy-kiểm-thử-tự-động)
+- [Checklist kiểm thử thủ công](#checklist-kiểm-thử-thủ-công)
+- [Giới hạn đã biết](#giới-hạn-đã-biết)
+- [Trạng thái yêu cầu](#trạng-thái-yêu-cầu)
 
-## 1. Cấu trúc Dự án (Project Structure)
+## Tổng quan
+
+Hệ thống hỗ trợ quản lý hồ sơ học phí và các nghiệp vụ tài chính liên quan, bao gồm:
+
+- Quản lý người dùng, đăng nhập và phiên làm việc.
+- Quản lý sinh viên, học kỳ, mức thu và hồ sơ học phí.
+- Ghi nhận thanh toán, theo dõi công nợ và lịch sử giao dịch.
+- Xử lý miễn giảm, hoàn tiền và đảo mục giao dịch.
+- Lập và in biên lai.
+- Theo dõi nhật ký kiểm toán và đối soát số liệu tài chính.
+
+Các tính năng và nghiệp vụ nêu trên được mô tả theo cấu trúc dự án và bộ kiểm thử đi kèm.
+
+## Công nghệ sử dụng
+
+| Thành phần | Công nghệ |
+| --- | --- |
+| Backend | PHP 8.1+ |
+| Cơ sở dữ liệu | MySQL / MariaDB |
+| Kết nối cơ sở dữ liệu | PDO |
+| Frontend | HTML5, CSS3, JavaScript ES6+ thuần |
+| Môi trường chạy cục bộ | XAMPP (Apache và MySQL/MariaDB) |
+| Kiểm thử backend | PHP CLI |
+| Kiểm thử frontend | JavaScript (`?test=1`) |
+
+Frontend không sử dụng npm, framework hoặc CDN bên ngoài.
+
+## Cấu trúc dự án
 
 ```text
-bigprojectnew/
-├── src/
-│   ├── index.html       # Giao diện chính hệ thống
-│   ├── styles.css       # Toàn bộ mã định dạng CSS thuần
-│   └── app.js           # Mã nguồn điều khiển & tính toán Vanilla JS
-├── tests/
-│   └── tests.js         # Bộ 28 kịch bản kiểm thử đơn vị tự động
-└── README.md            # Tài liệu hướng dẫn sử dụng & tài khoản quản trị
+my-web-project/
+│
+├── index.php                        # Điểm khởi chạy ứng dụng
+│
+├── frontend/                        # Giao diện HTML/CSS/JavaScript
+│   ├── index.html                   # Giao diện SPA quản lý học phí
+│   ├── css/
+│   │   └── style.css                # Giao diện responsive và CSS in biên lai
+│   ├── js/
+│   │   ├── main.js                  # Sự kiện giao diện, modal, tabs và in ấn
+│   │   ├── api.js                   # API client, CSRF Token và Idempotency UUID
+│   │   └── calc.js                  # Tính toán phía client và chuyển số thành chữ
+│   └── assets/
+│       ├── images/                  # Ảnh giao diện
+│       └── icons/                   # Biểu tượng SVG
+│
+├── backend/                         # Các thành phần backend
+│   ├── config/
+│   │   └── database.php             # Kết nối PDO, múi giờ và quản lý kết nối
+│   ├── controllers/
+│   │   └── UserController.php       # Đăng nhập, phiên, CSRF và người dùng
+│   ├── models/
+│   │   └── User.php                 # Truy vấn người dùng và xử lý mật khẩu
+│   └── api/
+│       └── users.php                # API người dùng và phiên làm việc
+│
+├── pages/                           # Các trang thông tin
+│   ├── about.php                    # Giới thiệu hệ thống
+│   └── contact.php                  # Liên hệ và gửi phản hồi
+│
+├── database/                        # SQL và dữ liệu khởi tạo
+│   ├── database.sql                 # CSDL hợp nhất gồm DDL và seed data
+│   ├── schema.sql                   # Cấu trúc bảng, khóa ngoại và view
+│   ├── seed.sql                     # Dữ liệu mẫu
+│   ├── create_app_user.sql          # Tạo tài khoản DB quyền tối thiểu
+│   └── seed_users.php               # Khởi tạo mật khẩu Bcrypt qua CLI
+│
+├── api/                             # API modules và handlers
+│   ├── index.php                    # Front controller cho /api/...
+│   ├── handlers/                    # Xử lý auth, students, fees, payments, refunds...
+│   └── lib/                         # Thư viện db, auth, csrf, validate, calc, audit...
+│
+├── config/                          # Cấu hình ứng dụng
+│   ├── config.php                   # Cấu hình môi trường (không đưa lên Git)
+│   └── config.example.php           # Tệp cấu hình mẫu
+│
+├── tests/                           # Bộ kiểm thử
+│   ├── run.php                      # Test runner backend
+│   └── tests.js                     # Test runner frontend (?test=1)
+│
+├── .htaccess                        # Quy tắc bảo mật Apache
+├── .gitignore                       # Danh sách tệp loại trừ khỏi Git
+├── LICENSE                          # Giấy phép MIT
+└── README.md                        # Tài liệu dự án
 ```
 
----
+## Yêu cầu hệ thống
 
-## 2. Hướng dẫn Chạy Ứng dụng (How to Run)
+- PHP **8.1** trở lên.
+- MySQL hoặc MariaDB.
+- Apache và PHP được cấu hình trong XAMPP.
+- PHP CLI có thể truy cập từ Terminal/Command Prompt/PowerShell để chạy script khởi tạo và kiểm thử.
+- Trình duyệt web hiện đại.
 
-Ứng dụng chạy trực tiếp trên bất kỳ trình duyệt hiện đại nào (Chrome, Edge, Firefox, Safari):
+## Cài đặt và chạy ứng dụng
 
-### Cách 1: Mở trực tiếp tệp HTML
-Nhấp đúp chuột vào tệp `src/index.html` để mở trực tiếp trên trình duyệt.
+Các bước dưới đây sử dụng đường dẫn XAMPP mặc định trên Windows.
 
-### Cách 2: Chạy qua Web Server cục bộ (Khuyên dùng)
-Nếu muốn chạy qua giao thức HTTP tiêu chuẩn:
-- **Dùng Node.js / npx:**
-  ```bash
-  npx serve .
-  ```
-  Truy cập: `http://localhost:3000/src/index.html`
-- **Dùng Python 3:**
-  ```bash
-  python -m http.server 8000
-  ```
-  Truy cập: `http://localhost:8000/src/index.html`
+### 1. Đưa dự án vào thư mục web
 
----
+Sao chép thư mục dự án vào:
 
-## 3. Tài khoản Quản trị viên Demo (Demo Credentials)
+```text
+C:\xampp\htdocs\tuition-system
+```
 
-| Thông tin | Giá trị |
-| :--- | :--- |
-| **Tên đăng nhập** | `admin` |
-| **Mật khẩu** | `admin123` |
+Có thể sử dụng Junction hoặc Symlink trỏ đến thư mục dự án hiện có.
 
-> [!WARNING] **Lưu ý Quan trọng về Bảo mật:**
-> Tài khoản quản trị này được lưu trữ và kiểm tra hoàn toàn ở phía máy khách (Client-Side) trong tệp `src/app.js`. Cơ chế này chỉ phục vụ mục đích trình diễn và thử nghiệm giao diện, **không cung cấp bảo mật thực tế**. Trong môi trường sản phẩm thực tế, việc xác thực phải được xử lý qua máy chủ an toàn với JWT/Cookie HttpOnly.
+### 2. Khởi động XAMPP
 
----
+Mở **XAMPP Control Panel**, sau đó khởi động:
 
-## 4. Chạy Bộ Kiểm thử Đơn vị (Unit Tests)
+- **Apache**
+- **MySQL** (MariaDB)
 
-Bộ kiểm thử bao gồm hơn 12 nhóm với 28 kịch bản kiểm thử tự động kiểm tra toàn bộ các hàm tính toán, ngưỡng biên số dư, làm tròn, chặn nộp thừa, quy trình hoàn tiền và tìm kiếm tiếng Việt không dấu.
+### 3. Tạo cơ sở dữ liệu và tài khoản ứng dụng
 
-Để chạy bộ kiểm thử, thêm tham số `?test=1` vào thanh địa chỉ trình duyệt:
-- Ví dụ: `http://localhost:8000/src/index.html?test=1` hoặc mở tệp `src/index.html?test=1`
-- Mở **Developer Tools** (phím `F12` hoặc `Ctrl + Shift + I`) và chọn tab **Console** để xem nhật ký kết quả chi tiết của từng bài kiểm thử.
-- Góc dưới màn hình sẽ hiển thị thanh thông báo trạng thái `Unit Tests: Passed`.
+Mở Terminal, Command Prompt hoặc PowerShell.
 
----
+**Cách 1: Nạp tệp SQL hợp nhất**
 
-## 5. Dữ liệu Mẫu Khởi tạo Tự động (Seed Data)
+```bash
+mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/database.sql"
+mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/create_app_user.sql"
+```
 
-Khi tải ứng dụng lần đầu tiên, hệ thống tự động khởi tạo dữ liệu mẫu vào `localStorage`:
-- **5 sinh viên**: `SV2026001` (Nguyễn Văn An), `SV2026002` (Trần Thị Bích), `SV2026003` (Lê Hoàng Long), `SV2026004` (Phạm Thu Hà), `SV2026005` (Đặng Minh Tuấn).
-- **2 học kỳ & 3 định mức tín chỉ**:
-  - Học kỳ 1 - Năm học 2026-2027: 450.000 ₫ / tín chỉ.
-  - Học kỳ 2 - Năm học 2026-2027: 470.000 ₫ / tín chỉ.
-  - Học kỳ 1 - Năm học 2027-2028: 500.000 ₫ / tín chỉ.
-- **1 hồ sơ miễn giảm**: Sinh viên `SV2026001` được giảm 20% học phí theo diện học bổng khuyến khích loại Giỏi.
-- **Các phiếu thanh toán bao phủ đầy đủ 3 trạng thái**:
-  - `Chưa thanh toán` (Unpaid): Sinh viên `SV2026003` và `SV2026005`.
-  - `Thanh toán một phần` (Partially Paid): Sinh viên `SV2026001` (nợ 6.480.000 ₫, đã nộp 3.000.000 ₫, còn nợ 3.480.000 ₫).
-  - `Đã thanh toán đủ` (Fully Paid): Sinh viên `SV2026002` (nộp 2 đợt: 4.000.000 ₫ + 2.750.000 ₫) và `SV2026004` (nộp 6.300.000 ₫).
+**Cách 2: Nạp lần lượt các tệp thành phần**
 
----
+```bash
+mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/schema.sql"
+mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/create_app_user.sql"
+mysql -u root tuition_system -e "source C:/xampp/htdocs/tuition-system/database/seed.sql"
+php C:/xampp/htdocs/tuition-system/database/seed_users.php
+```
 
-## 6. Các Tính năng Nổi bật & Quy tắc Nghiệp vụ
+Cách 1 nạp cấu trúc và dữ liệu mẫu từ `database.sql`. Cách 2 thực hiện riêng từng bước, bao gồm chạy script PHP để khởi tạo mật khẩu người dùng.
 
-1. **Bảo toàn Bản chụp Đơn giá (Rate Snapshot)**: Khi chỉnh sửa đơn giá tín chỉ của học kỳ, các hồ sơ học phí đã lập trước đó không bị thay đổi vì mỗi hồ sơ lưu giữ bản chụp đơn giá riêng tại thời điểm lập.
-2. **Quy tắc Chặn Nộp Thừa (Overpayment Rule)**: Nếu số tiền nhập vào vượt quá số tiền còn nợ, hệ thống lập tức từ chối và hiển thị thông báo:
-   `"Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước."` Không có dữ liệu nào được ghi nhận.
-3. **Quy trình Hoàn tiền Hai bước (Refund Procedure)**: Admin lập yêu cầu hoàn tiền với trạng thái ban đầu `"Chờ duyệt"`. Chỉ khi admin duyệt và xác nhận `"Đã hoàn tiền"`, số tiền thực nộp của sinh viên mới giảm xuống tương ứng.
-4. **Bảo toàn Lịch sử (Audit Trail / Reversals)**: Giao dịch thu tiền và hoàn tiền không bao giờ bị xóa. Các sai sót được điều chỉnh thông qua bút toán đảo mục (Reversal Entry) có ghi rõ lý do.
-5. **In Biên lai Thu tiền Chuẩn & Đọc số thành chữ**:
-   - Sử dụng CSS `@media print` để hiển thị duy nhất mẫu biên lai thu tiền khổ chuẩn khi in, ẩn toàn bộ thanh điều hướng, nút bấm và bảng dữ liệu.
-   - Biên lai bao gồm đầy đủ số biên lai tuần tự `PT-YYYYMMDD-XXXX`, ngày thu, mã sinh viên, họ tên, lớp, học kỳ, số tiền thu, số dư nợ còn lại, tên người thu tiền, tên trường và **số tiền viết bằng chữ tiếng Việt** (VD: *Năm triệu bốn trăm nghìn đồng chẵn*).
-6. **Tìm kiếm Tiếng Việt Không dấu**: Tìm kiếm sinh viên và lịch sử giao dịch không phân biệt chữ hoa, chữ thường và dấu tiếng Việt (ví dụ: gõ `nguyen` sẽ khớp với `Nguyễn`, gõ `dang` khớp với `Đặng`).
-7. **Đối soát Công nợ Tự động**: Hệ thống đối soát công nợ ở mọi học kỳ:
-   $$\text{Đã thực thu} + \text{Còn nợ} = \text{Tổng phải thu}$$
-   Khoản nộp thừa (nếu có do chỉnh sửa mức miễn giảm sau khi nộp) được tách riêng thành cảnh báo và không tính lẫn vào công nợ phải thu.
-8. **Chặn Xóa Sinh viên Có Dữ liệu**: Chặn tuyệt đối hành vi xóa sinh viên đã phát sinh hồ sơ học phí hoặc phiếu thu với thông báo:
-   `"Không thể xóa sinh viên đã có dữ liệu học phí."`
+### 4. Cấu hình ứng dụng
 
-## Ảnh chụp giao diện
+Nếu chưa có tệp cấu hình, sao chép:
 
-### Tổng quan & báo cáo
+```text
+config/config.example.php
+```
 
-![Dashboard](assets/screenshots/dashboard.png)
+thành:
 
-### Sinh viên
+```text
+config/config.php
+```
 
-![Students](assets/screenshots/students.png)
+Kiểm tra thông tin kết nối cơ sở dữ liệu trong `config/config.php`.
 
-### Quản lý chi trả
+Cấu hình mặc định được mô tả trong dự án:
 
-![Payments](assets/screenshots/payments.png)
+| Thuộc tính | Giá trị |
+| --- | --- |
+| Database | `tuition_system` |
+| Username | `tuition_user` |
+| Password | `TuitionApp2026!Sec` |
+
+Không sử dụng mật khẩu mẫu hoặc thông tin xác thực mặc định trên môi trường production. Thay đổi thông tin đăng nhập trước khi triển khai thực tế và không commit `config/config.php` lên Git.
+
+### 5. Truy cập ứng dụng
+
+Mở trình duyệt và truy cập:
+
+```text
+http://localhost/tuition-system/
+```
+
+## Tài khoản dùng thử
+
+Các tài khoản sau phục vụ kiểm thử và đánh giá chức năng trên môi trường cục bộ.
+
+> [!WARNING]
+> Đây là thông tin đăng nhập mẫu. Không sử dụng các mật khẩu này trong môi trường production. Hãy thay đổi hoặc vô hiệu hóa tài khoản thử nghiệm trước khi triển khai thực tế.
+
+| Tên đăng nhập | Mật khẩu | Vai trò | Mục đích |
+| --- | --- | --- | --- |
+| `admin` | `Admin@123` | `admin` | Kiểm thử các nghiệp vụ quản trị |
+| `staff01` | `Staff@123` | `admin` | Kiểm thử người thao tác trong Audit Log và biên lai |
+
+## Chạy kiểm thử tự động
+
+### Backend
+
+Chạy tại thư mục gốc của dự án:
+
+```bash
+php tests/run.php
+```
+
+Bộ kiểm thử sử dụng cơ sở dữ liệu riêng `tuition_test`, tự động reset bảng và nạp dữ liệu mẫu trước khi kiểm tra. Theo cấu hình được mô tả trong dự án, test runner bao gồm 73 bài kiểm thử tích hợp backend thuộc 15 nhóm quy tắc bảo mật và nghiệp vụ.
+
+Các nội dung được kiểm tra gồm:
+
+- Tính học phí gốc, miễn giảm theo phần trăm hoặc số tiền cố định và quy tắc làm tròn.
+- Từ chối khoản thanh toán vượt số tiền còn nợ và bảo toàn sổ cái khi giao dịch bị từ chối.
+- Các trường hợp biên: thanh toán thiếu 1 đồng, thanh toán đủ, số phải thu bằng 0 và thanh toán vượt mức.
+- Lưu snapshot đơn giá tín chỉ để không thay đổi khi đơn giá học kỳ được chỉnh sửa.
+- Quy trình hoàn tiền; giới hạn số tiền hoàn theo khoản nộp thừa khả dụng.
+- Bút toán đảo mục, ngăn đảo mục lặp lại và ngăn đảo mục của giao dịch đảo mục.
+- Idempotency bằng `request_id` theo định dạng UUID.
+- Đánh số biên lai nguyên tử theo ngày với định dạng `PT-YYYYMMDD-NNNN`; số thứ tự bắt đầu lại từ `0001` vào ngày mới.
+- Kiểm thử đồng thời: hai tiến trình PHP cùng thanh toán một hồ sơ; chỉ một tiến trình được chấp nhận khi khoản còn nợ không đủ cho cả hai.
+- Chuẩn hóa tìm kiếm tiếng Việt, bao gồm NFD/NFC và chữ hoa/chữ thường.
+- Ràng buộc toàn vẹn khi xóa sinh viên đã phát sinh công nợ hoặc hồ sơ.
+- Đối soát phương trình `Collected + Outstanding = Receivable`.
+- Bảo mật phiên: HTTP 401 khi chưa xác thực, HTTP 403 khi CSRF Token thiếu hoặc không hợp lệ và khóa tài khoản 15 phút sau 5 lần đăng nhập sai.
+- Kiểm tra dữ liệu nhập: chấp nhận định dạng `1.500.000` và `1,500,000`; từ chối số âm, số 0, số thập phân `1.5`, ký tự không hợp lệ và dữ liệu vượt giới hạn Unicode.
+- Từ chối ngày thanh toán trong tương lai.
+
+### Frontend
+
+Mở ứng dụng với tham số kiểm thử:
+
+```text
+http://localhost/tuition-system/?test=1
+```
+
+Test runner frontend nằm tại `frontend/js/tests.js` theo cấu trúc dự án.
+
+## Checklist kiểm thử thủ công
+
+| STT | Kịch bản | Kết quả kỳ vọng |
+| :---: | --- | --- |
+| 1 | Đăng nhập bằng `admin` / `Admin@123`. | Đăng nhập thành công; màn hình đăng nhập được ẩn và giao diện quản trị hiển thị tên "Quản trị viên Admin". |
+| 2 | Đăng nhập bằng tên người dùng hoặc mật khẩu không hợp lệ. | Hiển thị thông báo chung: *"Sai tên đăng nhập hoặc mật khẩu."*; không tiết lộ tài khoản có tồn tại hay không. |
+| 3 | Nhập sai mật khẩu liên tiếp 5 lần cho tài khoản `admin`. | Tài khoản bị khóa tạm thời 15 phút. Lần thử tiếp theo hiển thị thông báo khóa tài khoản (HTTP 409). |
+| 4 | Đăng xuất rồi nhấn nút **Back** của trình duyệt. | Không hiển thị dữ liệu nhạy cảm; ứng dụng yêu cầu đăng nhập lại. |
+| 5 | Truy cập `/api/students` hoặc `/api/fee-records/1` khi chưa đăng nhập. | Máy chủ trả HTTP 401 cùng thông báo *"Vui lòng đăng nhập để tiếp tục."* và không trả dữ liệu. |
+| 6 | Thanh toán đúng bằng số dư còn nợ. | Giao dịch được lưu; hồ sơ chuyển sang trạng thái **Đã thanh toán đủ** và biên lai được hiển thị. |
+| 7 | Thanh toán thiếu đúng 1 VND so với số còn nợ. | Giao dịch thành công; hồ sơ ở trạng thái **Thanh toán một phần**, còn nợ 1 VND. |
+| 8 | Thanh toán nhiều hơn số còn nợ 1 VND. | Giao dịch bị từ chối với thông báo *"Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước."*; không ghi thêm bản ghi vào sổ cái. |
+| 9 | Thêm miễn giảm vào hồ sơ đã thanh toán đủ, khiến số đã nộp lớn hơn số phải nộp. | Thao tác được chấp nhận; hồ sơ chuyển sang trạng thái **Thừa tiền** (`OVERPAID`) và không nhận thêm thanh toán. |
+| 10 | Tạo yêu cầu hoàn tiền cho khoản nộp thừa rồi duyệt hoàn tiền. | Yêu cầu chuyển từ `pending` sang `completed`; tổng tiền đã nộp giảm và trạng thái nộp thừa được xử lý. |
+| 11 | Tạo yêu cầu hoàn tiền rồi hủy yêu cầu. | Yêu cầu chuyển sang `cancelled`, có ghi nhận lý do hủy; công nợ không thay đổi. |
+| 12 | Chọn phiếu thu trong lịch sử và thực hiện **Đảo mục (Hủy)**. | Hệ thống yêu cầu lý do, tạo bút toán đảo mục đối ứng và khôi phục số dư nợ về mức trước giao dịch. |
+| 13 | Nhấp đúp nhanh vào nút **Ghi nhận phiếu thu**. | Nút gửi bị vô hiệu hóa trong lúc xử lý; `request_id` bảo đảm không tạo giao dịch trùng. |
+| 14 | Ngắt mạng khi nhấn Lưu, sau đó kết nối lại và thử lại. | Hiển thị thông báo lỗi mạng bằng tiếng Việt; dữ liệu đã nhập trên biểu mẫu được giữ lại. |
+| 15 | Tìm sinh viên bằng từ khóa `nguyen` hoặc `Nguyễn`. | Cả hai từ khóa đều tìm được sinh viên họ Nguyễn, gồm SV001 Nguyễn Văn An và SV005 Nguyễn Thị Hòa. |
+| 16 | Lọc lịch sử giao dịch theo khoảng ngày và học kỳ. | Danh sách sổ cái chỉ hiển thị giao dịch thuộc khoảng thời gian và học kỳ đã chọn. |
+| 17 | Kiểm tra thẻ Thống kê và Báo cáo đối soát công nợ. | Phương trình `Đã thực thu + Còn phải thu = Tổng phải thu` cân bằng và hiển thị nhãn **Khớp 100%**. |
+| 18 | Xem trước và in biên lai. | Biên lai có số biên lai, số tiền bằng số, số tiền bằng chữ và số dư còn nợ. Khi in, CSS `@media print` chỉ hiển thị mẫu biên lai. |
+| 19 | Tải lại trang hoặc mở lại trình duyệt khi đã đăng nhập. | Phiên làm việc được duy trì bằng cookie session; dữ liệu tài chính được tải từ cơ sở dữ liệu. |
+| 20 | Dừng Apache trong XAMPP rồi thao tác trên giao diện. | Hiển thị thông báo *"Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại kết nối mạng hoặc XAMPP."*; dữ liệu đang nhập không bị mất. |
+| 21 | Dừng MySQL trong XAMPP rồi tải lại trang. | Hiển thị thông báo *"Đã xảy ra lỗi hệ thống. Vui lòng thử lại."*; không để lộ mã nguồn, câu lệnh SQL hoặc stack trace. |
+| 22 | Kiểm tra giao diện ở chiều rộng màn hình 360px. | Bố cục responsive; thanh điều hướng và bảng dữ liệu có thể cuộn ngang mà không làm vỡ giao diện. |
+
+## Giới hạn đã biết
+
+- **Lưu phiên:** Ứng dụng sử dụng cơ chế session lưu bằng tệp mặc định của PHP thông qua `session_save_path()`.
+- **HTTPS trên XAMPP cục bộ:** Môi trường XAMPP mặc định chưa cấu hình SSL/HTTPS. Cờ `Secure` của cookie session được tắt khi kết nối không sử dụng HTTPS và chỉ bật khi phát hiện kết nối bảo mật qua cổng HTTPS (443).
+- **Multi-tenancy:** Hệ thống hiện được thiết kế theo mô hình single-tenant, phục vụ một đơn vị đào tạo.
+- **Chuyển số tiền thành chữ:** Chức năng hỗ trợ tiếng Việt cho các giá trị VND từ hàng đơn vị đến hàng trăm tỷ đồng và có kiểm thử tự động.
+
+## Trạng thái yêu cầu
+
+Theo trạng thái được ghi nhận trong tài liệu dự án, các yêu cầu trong đặc tả kỹ thuật và nghiệp vụ đã được triển khai và kiểm thử, bao gồm:
+
+- Session, CSRF và phân quyền.
+- Kiểm soát đồng thời bằng `FOR UPDATE`.
+- Idempotency bằng UUID.
+- Chuẩn hóa tìm kiếm tiếng Việt.
+- In biên lai.
+- Kiểm thử tự động cho các quy tắc nghiệp vụ và bảo mật.
+
+Tài liệu hiện ghi nhận không có yêu cầu nào bị bỏ sót. Kết luận này phản ánh trạng thái dự án được mô tả trong README; cần đối chiếu với mã nguồn và kết quả chạy kiểm thử thực tế khi đánh giá một phiên bản cụ thể.
