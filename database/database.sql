@@ -320,3 +320,18 @@ INSERT INTO `receipt_counters` (`day`, `last_no`) VALUES
 -- 10. Nhật ký Kiểm toán ban đầu (Audit Log)
 INSERT INTO `audit_log` (`user_id`, `action`, `entity`, `entity_id`, `payload`, `ip`, `created_at`) VALUES
 (1, 'seed_init', 'system', '0', '{"info": "Khởi tạo dữ liệu mẫu hệ thống"}', '127.0.0.1', '2026-08-01 08:00:00');
+
+-- ----------------------------------------------------------------------------
+-- 11. Tạo người dùng ứng dụng quyền tối thiểu (tuition_user)
+-- ----------------------------------------------------------------------------
+CREATE USER IF NOT EXISTS 'tuition_user'@'localhost' IDENTIFIED BY 'TuitionApp2026!Sec';
+CREATE USER IF NOT EXISTS 'tuition_user'@'127.0.0.1' IDENTIFIED BY 'TuitionApp2026!Sec';
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_system`.* TO 'tuition_user'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_system`.* TO 'tuition_user'@'127.0.0.1';
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_test`.* TO 'tuition_user'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_test`.* TO 'tuition_user'@'127.0.0.1';
+
+FLUSH PRIVILEGES;
+

@@ -10,7 +10,7 @@ Các thao tác xác thực, phân quyền, truy cập dữ liệu và xử lý n
 - [Công nghệ sử dụng](#công-nghệ-sử-dụng)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
-- [Cài đặt và chạy ứng dụng](#cài-đặt-và-chạy-ứng-dụng)
+- [Cài đặt và chạy ứng dụng](#cài-đặt-và-chạy-ứng-dụng-setup-guide)
 - [Tài khoản dùng thử](#tài-khoản-dùng-thử)
 - [Chạy kiểm thử tự động](#chạy-kiểm-thử-tự-động)
 - [Checklist kiểm thử thủ công](#checklist-kiểm-thử-thủ-công)
@@ -111,82 +111,56 @@ my-web-project/
 - PHP CLI có thể truy cập từ Terminal/Command Prompt/PowerShell để chạy script khởi tạo và kiểm thử.
 - Trình duyệt web hiện đại.
 
-## Cài đặt và chạy ứng dụng
+## Cài đặt và Chạy Ứng dụng (Setup Guide)
 
-Các bước dưới đây sử dụng đường dẫn XAMPP mặc định trên Windows.
+Hệ thống được thiết kế để cài đặt và chạy ngay chỉ trong **3 bước đơn giản** trên XAMPP.
 
-### 1. Đưa dự án vào thư mục web
-
-Sao chép thư mục dự án vào:
+### Bước 1: Đưa dự án vào thư mục web
+Chép toàn bộ thư mục dự án vào thư mục `htdocs` của XAMPP:
 
 ```text
 C:\xampp\htdocs\tuition-system
 ```
 
-Có thể sử dụng Junction hoặc Symlink trỏ đến thư mục dự án hiện có.
+*(Hoặc tạo liên kết Junction trỏ từ `C:\xampp\htdocs\tuition-system` tới thư mục mã nguồn).*
 
-### 2. Khởi động XAMPP
+### Bước 2: Khởi động XAMPP
+Mở **XAMPP Control Panel**, nhấn nút **Start** cho cả 2 dịch vụ:
+- ✅ **Apache**
+- ✅ **MySQL** (MariaDB)
 
-Mở **XAMPP Control Panel**, sau đó khởi động:
+### Bước 3: Nạp cơ sở dữ liệu (Chọn 1 trong 2 cách)
+Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồm toàn bộ cấu trúc bảng (schema), dữ liệu mẫu (seed data) và tự động tạo tài khoản kết nối. Bạn chỉ cần nạp duy nhất tệp này:
 
-- **Apache**
-- **MySQL** (MariaDB)
+- **Cách 1: Sử dụng phpMyAdmin (Dễ nhất - Không cần dùng lệnh)**:
+  1. Mở trình duyệt web và vào địa chỉ: [http://localhost/phpmyadmin/](http://localhost/phpmyadmin/)
+  2. Bấm vào tab **Nhập** (hoặc **Import**) trên thanh menu trên cùng.
+  3. Tại mục **Tập tin cần nhập**, bấm **Choose File** (hoặc **Chọn tệp**) và chọn tệp `database/database.sql` trong thư mục dự án.
+  4. Cuộn xuống cuối trang và bấm nút **Thực hiện** (hoặc **Import** / **Go**). Quá trình nạp CSDL hoàn tất sau vài giây!
 
-### 3. Tạo cơ sở dữ liệu và tài khoản ứng dụng
+- **Cách 2: Sử dụng dòng lệnh 1 chạm (Nhanh nhất cho Terminal)**:
+  Mở Terminal / PowerShell và chạy duy nhất lệnh sau:
+  ```bash
+  mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/database.sql"
+  ```
 
-Mở Terminal, Command Prompt hoặc PowerShell.
+---
 
-**Cách 1: Nạp tệp SQL hợp nhất**
+### Bước 4: Mở ứng dụng và Đăng nhập
+Mở trình duyệt web và truy cập:
 
-```bash
-mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/database.sql"
-mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/create_app_user.sql"
-```
+👉 **[http://localhost/tuition-system/](http://localhost/tuition-system/)**
 
-**Cách 2: Nạp lần lượt các tệp thành phần**
+Đăng nhập bằng tài khoản Quản trị viên:
+- **Tên đăng nhập:** `admin`
+- **Mật khẩu:** `Admin@123`
 
-```bash
-mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/schema.sql"
-mysql -u root -e "source C:/xampp/htdocs/tuition-system/database/create_app_user.sql"
-mysql -u root tuition_system -e "source C:/xampp/htdocs/tuition-system/database/seed.sql"
-php C:/xampp/htdocs/tuition-system/database/seed_users.php
-```
+---
 
-Cách 1 nạp cấu trúc và dữ liệu mẫu từ `database.sql`. Cách 2 thực hiện riêng từng bước, bao gồm chạy script PHP để khởi tạo mật khẩu người dùng.
-
-### 4. Cấu hình ứng dụng
-
-Nếu chưa có tệp cấu hình, sao chép:
-
-```text
-config/config.example.php
-```
-
-thành:
-
-```text
-config/config.php
-```
-
-Kiểm tra thông tin kết nối cơ sở dữ liệu trong `config/config.php`.
-
-Cấu hình mặc định được mô tả trong dự án:
-
-| Thuộc tính | Giá trị |
-| --- | --- |
-| Database | `tuition_system` |
-| Username | `tuition_user` |
-| Password | `TuitionApp2026!Sec` |
-
-Không sử dụng mật khẩu mẫu hoặc thông tin xác thực mặc định trên môi trường production. Thay đổi thông tin đăng nhập trước khi triển khai thực tế và không commit `config/config.php` lên Git.
-
-### 5. Truy cập ứng dụng
-
-Mở trình duyệt và truy cập:
-
-```text
-http://localhost/tuition-system/
-```
+### Tùy chỉnh Nâng cao (Tùy chọn)
+- **Tệp cấu hình**: Dự án đã được thiết lập sẵn cấu hình chuẩn trong `config/config.php` (User: `tuition_user`, Mật khẩu: `TuitionApp2026!Sec`, Database: `tuition_system`).
+- Nếu bạn muốn chỉnh sửa cổng kết nối, tên database hoặc phân quyền riêng, có thể chỉnh sửa trực tiếp trong `config/config.php` (mẫu tham khảo tại `config/config.example.php`).
+- **Môi trường sản xuất (Production)**: Luôn đổi mật khẩu người dùng mặc định và đảm bảo tệp `config/config.php` được bảo vệ, không commit mật khẩu nhạy cảm lên Git.
 
 ## Tài khoản dùng thử
 
@@ -238,7 +212,7 @@ Mở ứng dụng với tham số kiểm thử:
 http://localhost/tuition-system/?test=1
 ```
 
-Test runner frontend nằm tại `frontend/js/tests.js` theo cấu trúc dự án.
+Test runner frontend nằm tại `tests/tests.js` và kết quả kiểm thử được hiển thị trực tiếp trong Console của trình duyệt (`F12`).
 
 ## Checklist kiểm thử thủ công
 
