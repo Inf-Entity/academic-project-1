@@ -108,7 +108,7 @@ if (preg_match('#^/api/fee-records/(\d+)/payments$#', $path, $m) || preg_match('
     exit;
 }
 
-if (preg_match('#^/api/fee-records/(\d+)/refunds$#', $path, $m) || preg_match('#^/api/refunds/(\d+)/(complete|cancel)$#', $path, $m)) {
+if ($path === '/api/refunds' || preg_match('#^/api/fee-records/(\d+)/refunds$#', $path, $m) || preg_match('#^/api/refunds/(\d+)/(complete|cancel)$#', $path, $m)) {
     handle_refunds_routes($method, $path, $m ?? []);
     exit;
 }

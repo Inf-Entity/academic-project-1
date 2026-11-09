@@ -136,7 +136,7 @@ Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồ
   1. Mở trình duyệt web và vào địa chỉ: [http://localhost/phpmyadmin/](http://localhost/phpmyadmin/)
   2. Tạo cơ sở dữ liệu `tuition_system` với bảng mã `utf8mb4_unicode_ci` (nếu chưa có).
   3. Chọn cơ sở dữ liệu `tuition_system` ở danh sách bên trái.
-  4. Bấm tab **Nhập** (Import) và thực hiện nhập lần lượt các tệp theo đúng thứ tự:
+  4. Bấm tab **Nhập** (Import). Xác nhận mục **Bảng mã của tập tin** (Character set of the file) là **utf-8** trước khi nạp tệp. Thực hiện nhập lần lượt các tệp theo đúng thứ tự:
      - **Bước 1:** Nhập `database/schema.sql` (Khởi tạo cấu trúc bảng, khóa ngoại RESTRICT, chỉ mục).
      - **Bước 2:** Nhập `database/create_app_user.sql` (Tạo người dùng `tuition_user` với quyền tối thiểu).
      - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ, gồm: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền).
@@ -147,7 +147,7 @@ Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồ
   *(Lưu ý: Bạn có thể re-import `schema.sql` và `seed.sql` nhiều lần liên tiếp mà không gặp lỗi).*
 
 - **Cách 2: Sử dụng tệp hợp nhất `database/database.sql` hoặc dòng lệnh nhanh**:
-  - **phpMyAdmin**: Chọn database `tuition_system`, Import tệp hợp nhất `database/database.sql`, sau đó chạy `php database/seed_users.php`.
+  - **phpMyAdmin**: Chọn database `tuition_system`, chọn tab **Nhập** (Import), đảm bảo **Bảng mã của tập tin** (Character set of the file) là **utf-8**, Import tệp hợp nhất `database/database.sql`, sau đó chạy `php database/seed_users.php`.
   - **Dòng lệnh Terminal / PowerShell**:
     ```bash
     mysql -u root -e "CREATE DATABASE IF NOT EXISTS tuition_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"

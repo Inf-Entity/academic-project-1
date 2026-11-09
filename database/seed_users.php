@@ -55,6 +55,8 @@ try {
     }
 }
 
+$pdo->exec("SET NAMES utf8mb4");
+
 $adminUsers = [
     [
         'username'  => 'admin',

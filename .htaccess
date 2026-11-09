@@ -40,6 +40,9 @@ Options -Indexes
 # Cấu hình trang mặc định nếu mod_rewrite không bật
 DirectoryIndex index.php frontend/index.html src/index.html index.html
 
+# Cấu hình bảng mã mặc định UTF-8
+AddDefaultCharset UTF-8
+
 # Security Headers cho static files và HTML
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"

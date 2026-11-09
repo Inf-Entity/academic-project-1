@@ -9,6 +9,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 -- ----------------------------------------------------------------------------
 -- XÓA BẢNG CŨ (Child-first order)
 -- ----------------------------------------------------------------------------
+DROP VIEW IF EXISTS `v_fee_record_summaries`;
 DROP TABLE IF EXISTS `audit_log`;
 DROP TABLE IF EXISTS `receipt_counters`;
 DROP TABLE IF EXISTS `refund_requests`;

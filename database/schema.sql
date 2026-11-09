@@ -7,6 +7,7 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Xóa các bảng theo thứ tự bảng con trước, bảng cha sau (Child-first order)
+DROP VIEW IF EXISTS `v_fee_record_summaries`;
 DROP TABLE IF EXISTS `audit_log`;
 DROP TABLE IF EXISTS `receipt_counters`;
 DROP TABLE IF EXISTS `refund_requests`;

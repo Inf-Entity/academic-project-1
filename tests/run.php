@@ -1194,6 +1194,164 @@ $pdo->exec("DELETE FROM refund_requests WHERE fee_record_id = {$comboSourceId}")
 $pdo->exec("DELETE FROM fee_records WHERE id = {$comboSourceId}");
 
 // ----------------------------------------------------------------------------
+// 17. KIỂM THỬ KHẮC PHỤC LỖI (DEFECT VERIFICATION: ENCODING, REFUNDS, OVERPAID)
+// ----------------------------------------------------------------------------
+suite_header("17. Kiểm thử các lỗi đã khắc phục (Defect Verification: Encoding, Refunds, Overpaid Status)");
+
+// 17.1 Encoding round-trip (Issue 1)
+$testStrings = ["Nguyễn Văn An", "Đã thanh toán đủ", "Thanh toán một phần"];
+
+$stmt = $pdo->prepare("SELECT :s1 AS s1, :s2 AS s2, :s3 AS s3");
+$stmt->execute([
+    's1' => $testStrings[0],
+    's2' => $testStrings[1],
+    's3' => $testStrings[2]
+]);
+$dbRow = $stmt->fetch();
+$dbRoundTripOk = ($dbRow['s1'] === $testStrings[0] && $dbRow['s2'] === $testStrings[1] && $dbRow['s3'] === $testStrings[2])
+    && (bin2hex($dbRow['s1']) === bin2hex($testStrings[0]))
+    && (bin2hex($dbRow['s2']) === bin2hex($testStrings[1]))
+    && (bin2hex($dbRow['s3']) === bin2hex($testStrings[2]));
+
+$jsonEncoded = json_encode($testStrings, JSON_UNESCAPED_UNICODE);
+$jsonDecoded = json_decode($jsonEncoded, true);
+$jsonRoundTripOk = ($jsonDecoded === $testStrings)
+    && (bin2hex($jsonDecoded[0]) === bin2hex($testStrings[0]))
+    && (bin2hex($jsonDecoded[1]) === bin2hex($testStrings[1]))
+    && (bin2hex($jsonDecoded[2]) === bin2hex($testStrings[2]));
+
+$sv001Check = $pdo->query("SELECT full_name, HEX(full_name) AS hex_name FROM students WHERE student_code = 'SV001'")->fetch();
+$sv001HexOk = ($sv001Check && str_starts_with($sv001Check['hex_name'], '4E677579E1BB856E')); // UTF-8 bytes for "Nguyễn"
+
+it("Encoding round-trip: Nguyễn Văn An, Đã thanh toán đủ, Thanh toán một phần toàn vẹn qua DB, JSON và HEX SV001",
+    $dbRoundTripOk && $jsonRoundTripOk && $sv001HexOk
+);
+
+// Chuẩn bị dữ liệu kiểm thử cho các test 17.2 -> 17.5
+// Tạo 1 sinh viên kiểm thử SV999
+$pdo->exec("DELETE FROM students WHERE student_code = 'SV999'");
+$pdo->prepare("INSERT INTO students (student_code, full_name, name_search, class_name, created_at, updated_at) VALUES ('SV999', 'Nguyễn Kiểm Thử', 'nguyen kiem thu', 'TEST-01', NOW(), NOW())")->execute();
+$testStudentId = (int)$pdo->lastInsertId();
+
+// Tạo hồ sơ học phí A (Kỳ 1) cho SV999: 10 tín chỉ x 850.000 = 8.500.000
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at) VALUES (:sid, 1, 10, 850000, 8500000, NOW(), NOW())")->execute(['sid' => $testStudentId]);
+$feeRecordA = (int)$pdo->lastInsertId();
+
+// Nộp 9.500.000 -> nộp thừa 1.000.000
+$pdo->prepare("INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, receipt_no, request_id, created_by, created_at) VALUES (:frId, 'payment', 9500000, 'Chuyển khoản', CURDATE(), :rcpt, :reqId, 1, NOW())")->execute([
+    'frId'  => $feeRecordA,
+    'rcpt'  => 'PT-' . date('Ymd') . '-9991',
+    'reqId' => generate_uuid()
+]);
+
+// 17.2 Refund created via endpoint appears in GET /api/fee-records/{id}.refunds
+$refundReqId = generate_uuid();
+$createRefRes = $api->request('POST', "/fee-records/{$feeRecordA}/refunds", [
+    'amount'     => 1000000,
+    'reason'     => 'Hoàn tiền thừa kiểm thử',
+    'request_id' => $refundReqId
+]);
+$createdRefundId = (int)($createRefRes['body']['data']['id'] ?? 0);
+
+$getFeeARes = $api->request('GET', "/fee-records/{$feeRecordA}");
+$refundsList = $getFeeARes['body']['data']['refunds'] ?? null;
+$refundFound = false;
+if (is_array($refundsList)) {
+    foreach ($refundsList as $rfItem) {
+        if ((int)($rfItem['id'] ?? 0) === $createdRefundId) {
+            $refundFound = true;
+            break;
+        }
+    }
+}
+it("Refund created via the endpoint appears in GET /api/fee-records/{id}.refunds", 
+    $createRefRes['status'] === 201 && is_array($refundsList) && $refundFound
+);
+
+// 17.3 After refund completion, the record's status is Fully Paid and overpaid is false
+$compRes = $api->request('POST', "/refunds/{$createdRefundId}/complete");
+$getFeeAAfterComp = $api->request('GET', "/fee-records/{$feeRecordA}");
+$feeAData = $getFeeAAfterComp['body']['data'] ?? [];
+it("After refund completion, the record's status is Fully Paid and overpaid is false", 
+    $compRes['status'] === 200 
+    && ($feeAData['status'] ?? '') === 'Fully Paid' 
+    && ($feeAData['is_overpaid'] ?? null) === false
+    && (int)($feeAData['total_paid'] ?? 0) === 8500000
+    && (int)($feeAData['net_due'] ?? 0) === 8500000
+);
+
+// Tạo hồ sơ học phí B (nguồn) và C (đích) cho SV999 để test chuyển tiền thừa (transfer)
+// Hồ sơ B (Kỳ 2): Gross 7.000.000, nộp 7.700.000 -> thừa 700.000
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at) VALUES (:sid, 2, 10, 700000, 7000000, NOW(), NOW())")->execute(['sid' => $testStudentId]);
+$feeRecordB = (int)$pdo->lastInsertId();
+$pdo->prepare("INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, receipt_no, request_id, created_by, created_at) VALUES (:frId, 'payment', 7700000, 'Chuyển khoản', CURDATE(), :rcpt, :reqId, 1, NOW())")->execute([
+    'frId'  => $feeRecordB,
+    'rcpt'  => 'PT-' . date('Ymd') . '-9992',
+    'reqId' => generate_uuid()
+]);
+
+// Hồ sơ C (Kỳ 3): Gross 8.500.000, nộp 0 -> còn nợ 8.500.000
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at) VALUES (:sid, 3, 10, 850000, 8500000, NOW(), NOW())")->execute(['sid' => $testStudentId]);
+$feeRecordC = (int)$pdo->lastInsertId();
+
+// 17.4 After transfer, source is Fully Paid, target outstanding decreased by the transfer amount, and neither profile shows Overpaid
+$transferRes = $api->request('POST', "/fee-records/{$feeRecordB}/transfers", [
+    'target_fee_record_id' => $feeRecordC,
+    'amount'               => 700000,
+    'reason'               => 'Chuyển toàn bộ 700.000 tiền thừa sang kỳ 3',
+    'request_id'           => generate_uuid()
+]);
+
+$getSourceRes = $api->request('GET', "/fee-records/{$feeRecordB}");
+$getTargetRes = $api->request('GET', "/fee-records/{$feeRecordC}");
+$sourceData = $getSourceRes['body']['data'] ?? [];
+$targetData = $getTargetRes['body']['data'] ?? [];
+
+$sourceOk = (($sourceData['status'] ?? '') === 'Fully Paid' && ($sourceData['is_overpaid'] ?? null) === false && (int)($sourceData['total_paid'] ?? 0) === 7000000);
+$targetOk = (($targetData['is_overpaid'] ?? null) === false && (int)($targetData['outstanding'] ?? 0) === 7800000 && (int)($targetData['total_paid'] ?? 0) === 700000);
+
+it("After transfer, source is Fully Paid, target outstanding decreased by the transfer amount, and neither profile shows Overpaid", 
+    $transferRes['status'] === 201 && $sourceOk && $targetOk
+);
+
+// 17.5 Cancel of a pending refund returns the excess and the Overpaid warning reappears correctly
+// Nộp thêm 500.000 vào hồ sơ B -> nộp thừa lại 500.000 (total_paid = 7.500.000, net = 7.000.000)
+$pdo->prepare("INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, receipt_no, request_id, created_by, created_at) VALUES (:frId, 'payment', 500000, 'Chuyển khoản', CURDATE(), :rcpt, :reqId, 1, NOW())")->execute([
+    'frId'  => $feeRecordB,
+    'rcpt'  => 'PT-' . date('Ymd') . '-9993',
+    'reqId' => generate_uuid()
+]);
+
+// Tạo pending refund 500.000
+$refCancelTestRes = $api->request('POST', "/fee-records/{$feeRecordB}/refunds", [
+    'amount'     => 500000,
+    'reason'     => 'Yêu cầu hoàn để kiểm thử hủy',
+    'request_id' => generate_uuid()
+]);
+$refundToCancelId = (int)($refCancelTestRes['body']['data']['id'] ?? 0);
+
+// Hủy yêu cầu hoàn tiền này
+$cancelActionRes = $api->request('POST', "/refunds/{$refundToCancelId}/cancel", [
+    'cancel_reason' => 'Hủy yêu cầu hoàn tiền để trả lại số dư thừa'
+]);
+
+$getFeeBAfterCancel = $api->request('GET', "/fee-records/{$feeRecordB}");
+$feeBAfterCancelData = $getFeeBAfterCancel['body']['data'] ?? [];
+
+it("Cancel of a pending refund returns the excess and the Overpaid warning reappears correctly", 
+    $cancelActionRes['status'] === 200
+    && ($feeBAfterCancelData['is_overpaid'] ?? false) === true
+    && (int)($feeBAfterCancelData['overpaid_amount'] ?? 0) === 500000
+    && (int)($feeBAfterCancelData['pending_refunds_sum'] ?? -1) === 0
+);
+
+// Dọn dẹp dữ liệu kiểm thử SV999
+$pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id IN ({$feeRecordA}, {$feeRecordB}, {$feeRecordC})");
+$pdo->exec("DELETE FROM refund_requests WHERE fee_record_id IN ({$feeRecordA}, {$feeRecordB}, {$feeRecordC})");
+$pdo->exec("DELETE FROM fee_records WHERE id IN ({$feeRecordA}, {$feeRecordB}, {$feeRecordC})");
+$pdo->exec("DELETE FROM students WHERE id = {$testStudentId}");
+
+// ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ
 // ----------------------------------------------------------------------------
 echo "\n" . COLOR_BOLD . "====================================================================\n";

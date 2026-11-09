@@ -319,6 +319,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $stmt = $db->prepare(
             "SELECT 
                 v.*,
+                v.fee_record_id AS id,
                 s.student_code, s.full_name, s.class_name,
                 sem.term_no, sem.academic_year_start,
                 CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
@@ -363,7 +364,9 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $calc = derive_payment_status((int)$fee['total_paid'], (int)$fee['net_due']);
 
         json_success(array_merge($fee, $calc, [
+            'id'              => $feeRecordId,
             'ledger_entries'  => $ledger,
+            'refunds'         => $refunds,
             'refund_requests' => $refunds
         ]));
     }

@@ -230,6 +230,10 @@ function fetch_fee_record_summary(PDO $pdo, int $feeRecordId): ?array {
     $stmt = $pdo->prepare("SELECT * FROM {$sub} v WHERE v.fee_record_id = :id");
     $stmt->execute(['id' => $feeRecordId]);
     $res = $stmt->fetch();
-    return $res ?: null;
+    if (!$res) {
+        return null;
+    }
+    $calc = derive_payment_status((int)$res['total_paid'], (int)$res['net_due']);
+    return array_merge($res, $calc);
 }
 

@@ -242,7 +242,8 @@
     await Promise.all([
       loadSemestersList(),
       loadRatesData(),
-      loadStudentsData()
+      loadStudentsData(),
+      loadPaymentsData()
     ]);
     switchTab(AppState.currentTab || 'reports');
   }
@@ -681,6 +682,24 @@
     } catch (err) {
       showToast('Lỗi tải hồ sơ học phí: ' + err.message, true);
     }
+  async function refreshFeeRecord(feeRecordId) {
+    if (!feeRecordId) return null;
+    try {
+      const res = await Api.get(`/fee-records/${feeRecordId}`);
+      if (res && res.ok && res.data) {
+        const updated = res.data;
+        const idx = AppState.feeRecords.findIndex(r => String(r.fee_record_id || r.id) === String(feeRecordId));
+        if (idx !== -1) {
+          AppState.feeRecords[idx] = { ...AppState.feeRecords[idx], ...updated };
+        }
+        renderFeesTable(AppState.feeRecords);
+        populatePaymentFeeSelect();
+        return updated;
+      }
+    } catch (e) {
+      console.warn('refreshFeeRecord error:', e);
+    }
+    return null;
   }
 
   function renderFeesTable(records) {
@@ -969,7 +988,10 @@
       await Api.put(`/fee-records/${feeId}/exemption`, body, btn);
       showToast('Áp dụng miễn giảm học phí thành công.');
       document.getElementById('modal-exemption').close();
-      loadFeesData();
+      await refreshFeeRecord(feeId);
+      await loadFeesData();
+      await loadPaymentsData();
+      await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
       else showToast(err.message, true);
@@ -987,7 +1009,10 @@
           await Api.delete(`/fee-records/${feeId}/exemption`);
           showToast('Đã xóa chính sách miễn giảm.');
           document.getElementById('modal-exemption').close();
-          loadFeesData();
+          await refreshFeeRecord(feeId);
+          await loadFeesData();
+          await loadPaymentsData();
+          await loadReportsData();
         } catch (err) {
           showToast(err.message, true);
         }
@@ -1078,8 +1103,10 @@
       const res = await Api.post(`/fee-records/${feeId}/payments`, body, btn);
       showToast('Ghi nhận phiếu thu học phí thành công.');
       document.getElementById('modal-payment').close();
-      loadFeesData();
-      loadPaymentsData();
+      await refreshFeeRecord(feeId);
+      await loadFeesData();
+      await loadPaymentsData();
+      await loadReportsData();
 
       // Mở luôn biên lai in
       if (res && res.data && res.data.id) {
@@ -1141,24 +1168,31 @@
       await Api.post(`/fee-records/${feeId}/refunds`, body, btn);
       showToast('Tạo yêu cầu hoàn tiền thành công.');
       document.getElementById('modal-refund').close();
-      loadFeesData();
-      loadPaymentsData();
+      await refreshFeeRecord(feeId);
+      await loadFeesData();
+      await loadPaymentsData();
+      await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
       else showToast(err.message, true);
     }
   }
 
-  async function completeRefund(refundId) {
+  async function completeRefund(refundId, feeRecordId) {
     showConfirm(
       'Duyệt hoàn tiền',
       'Bạn có chắc chắn muốn xác nhận hoàn tiền cho sinh viên?',
       async () => {
         try {
-          await Api.post(`/refunds/${refundId}/complete`);
+          const res = await Api.post(`/refunds/${refundId}/complete`);
           showToast('Đã duyệt hoàn tất yêu cầu hoàn tiền.');
-          loadFeesData();
-          loadPaymentsData();
+          const fId = feeRecordId || (res && res.data && res.data.fee_record_id);
+          if (fId) {
+            await refreshFeeRecord(fId);
+          }
+          await loadFeesData();
+          await loadPaymentsData();
+          await loadReportsData();
         } catch (err) {
           showToast(err.message, true);
         }
@@ -1166,16 +1200,21 @@
     );
   }
 
-  async function cancelRefund(refundId) {
+  async function cancelRefund(refundId, feeRecordId) {
     showConfirm(
       'Hủy yêu cầu hoàn tiền',
       'Bạn có chắc chắn muốn hủy bỏ yêu cầu hoàn tiền này?',
       async () => {
         try {
-          await Api.post(`/refunds/${refundId}/cancel`, { cancel_reason: 'Quản trị viên hủy bỏ' });
+          const res = await Api.post(`/refunds/${refundId}/cancel`, { cancel_reason: 'Quản trị viên hủy bỏ' });
           showToast('Đã hủy yêu cầu hoàn tiền.');
-          loadFeesData();
-          loadPaymentsData();
+          const fId = feeRecordId || (res && res.data && res.data.fee_record_id);
+          if (fId) {
+            await refreshFeeRecord(fId);
+          }
+          await loadFeesData();
+          await loadPaymentsData();
+          await loadReportsData();
         } catch (err) {
           showToast(err.message, true);
         }
@@ -1419,8 +1458,10 @@
         await Api.post(`/fee-records/${feeId}/refunds`, body, btn);
         showToast('Đã tạo yêu cầu hoàn tiền thành công.');
         document.getElementById('modal-overpaid-resolution').close();
-        loadFeesData();
-        loadPaymentsData();
+        await refreshFeeRecord(feeId);
+        await loadFeesData();
+        await loadPaymentsData();
+        await loadReportsData();
       } catch (err) {
         showToast(err.message, true);
       }
@@ -1493,8 +1534,11 @@
             await Api.post(`/fee-records/${feeId}/transfers`, body, btn);
             showToast('Chuyển tiền thừa sang hồ sơ khác thành công.');
             document.getElementById('modal-overpaid-resolution').close();
-            loadFeesData();
-            loadPaymentsData();
+            await refreshFeeRecord(feeId);
+            await refreshFeeRecord(targetId);
+            await loadFeesData();
+            await loadPaymentsData();
+            await loadReportsData();
           } catch (err) {
             showToast(err.message, true);
           }
@@ -1537,8 +1581,13 @@
       await Api.post(`/ledger/${entryId}/reversal`, body, btn);
       showToast('Đảo mục giao dịch thành công. Số dư nợ đã được khôi phục.');
       document.getElementById('modal-reversal').close();
-      loadFeesData();
-      loadPaymentsData();
+      const feeId = AppState.selectedTxForReversal?.fee_record_id || AppState.selectedTxForReversal?.feeRecordId;
+      if (feeId) {
+        await refreshFeeRecord(feeId);
+      }
+      await loadFeesData();
+      await loadPaymentsData();
+      await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
       else showToast(err.message, true);
@@ -1549,13 +1598,77 @@
 
   async function loadPaymentsData() {
     try {
-      const txRes = await Api.get('/history');
-      if (txRes.ok) {
+      const [txRes, rfRes] = await Promise.all([
+        Api.get('/history'),
+        Api.get('/refunds')
+      ]);
+      if (txRes && txRes.ok) {
         renderTransactionsTable(txRes.data || []);
       }
+      if (rfRes && rfRes.ok) {
+        renderRefundsTable(rfRes.data || []);
+      }
     } catch (err) {
-      showToast('Lỗi tải lịch sử giao dịch: ' + err.message, true);
+      showToast('Lỗi tải dữ liệu thu chi & hoàn trả: ' + err.message, true);
     }
+  }
+
+  function renderRefundsTable(refunds) {
+    const countEl = document.getElementById('pending-refund-count');
+    const pendingCount = Array.isArray(refunds) ? refunds.filter(r => r.status === 'pending').length : 0;
+    if (countEl) {
+      countEl.textContent = pendingCount;
+    }
+
+    const tbody = document.getElementById('refunds-table-body');
+    if (!tbody) return;
+
+    if (!refunds || refunds.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Chưa có yêu cầu hoàn tiền nào.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = refunds.map(r => {
+      let statusBadge = 'badge-secondary';
+      let statusLabel = r.status;
+      if (r.status === 'pending') {
+        statusBadge = 'badge-warning';
+        statusLabel = 'Chờ duyệt';
+      } else if (r.status === 'completed') {
+        statusBadge = 'badge-success';
+        statusLabel = 'Đã hoàn tất';
+      } else if (r.status === 'cancelled') {
+        statusBadge = 'badge-secondary';
+        statusLabel = 'Đã hủy';
+      }
+
+      const canAction = (r.status === 'pending');
+      const actionContent = canAction ? `
+        <button type="button" class="btn btn-sm btn-outline-success btn-complete-refund" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✓ Duyệt</button>
+        <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
+      ` : (r.status === 'completed' ? `<small class="text-success font-weight-bold">Đã duyệt (${escapeHTML(r.completed_by_name || 'Admin')})</small>` : `<small class="text-muted">Đã hủy${r.cancel_reason ? ': ' + escapeHTML(r.cancel_reason) : ''}</small>`);
+
+      return `
+        <tr>
+          <td><strong>YC-${String(r.id).padStart(4, '0')}</strong></td>
+          <td>${Calc.formatDateVN(r.created_at)}</td>
+          <td>${escapeHTML(r.student_code || '-')}</td>
+          <td>${escapeHTML(r.student_name || r.full_name || '-')}</td>
+          <td>${escapeHTML(r.semester_label || '-')}</td>
+          <td class="text-right text-danger"><strong>${Calc.formatVND(r.amount)}</strong></td>
+          <td>${escapeHTML(r.reason || '-')}</td>
+          <td><span class="badge ${statusBadge}">${statusLabel}</span></td>
+          <td class="text-center">${actionContent}</td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-complete-refund').forEach(btn => {
+      btn.addEventListener('click', () => completeRefund(btn.dataset.id, btn.dataset.feeId));
+    });
+    tbody.querySelectorAll('.btn-cancel-refund-item').forEach(btn => {
+      btn.addEventListener('click', () => cancelRefund(btn.dataset.id, btn.dataset.feeId));
+    });
   }
 
   function renderTransactionsTable(txs) {
@@ -1761,6 +1874,7 @@
       document.getElementById('subtab-refunds').classList.add('active');
       document.getElementById('tx-view-container').hidden = true;
       document.getElementById('refunds-view-container').hidden = false;
+      loadPaymentsData();
     });
 
     // Report filters

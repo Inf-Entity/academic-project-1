@@ -55,9 +55,11 @@ class Database {
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4",
         ];
 
         $pdo = new PDO($dsn, $cfg['user'], $cfg['pass'], $options);
+        $pdo->exec("SET NAMES utf8mb4");
         // Đồng bộ múi giờ phiên làm việc MySQL sang Asia/Ho_Chi_Minh (+07:00)
         $pdo->exec("SET time_zone = '+07:00'");
 

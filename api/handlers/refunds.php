@@ -16,6 +16,55 @@ require_once dirname(__DIR__) . '/lib/calc.php';
 function handle_refunds_routes(string $method, string $path, array $matches): void {
     require_admin();
 
+    // 0. GET /api/refunds (List all refund requests)
+    if ($path === '/api/refunds' && $method === 'GET') {
+        $db = get_db_connection();
+        $status = trim((string)($_GET['status'] ?? ''));
+        $semester = trim((string)($_GET['semester'] ?? ''));
+        $feeRecordId = isset($_GET['fee_record_id']) ? (int)$_GET['fee_record_id'] : 0;
+
+        $sql = "SELECT 
+                    r.*,
+                    s.id AS student_id,
+                    s.student_code,
+                    s.full_name AS student_name,
+                    s.class_name,
+                    sem.id AS semester_id,
+                    CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label,
+                    u1.full_name AS created_by_name,
+                    u2.full_name AS completed_by_name,
+                    u3.full_name AS cancelled_by_name
+                FROM refund_requests r
+                JOIN fee_records fr ON r.fee_record_id = fr.id
+                JOIN students s ON fr.student_id = s.id
+                JOIN semesters sem ON fr.semester_id = sem.id
+                LEFT JOIN users u1 ON r.created_by = u1.id
+                LEFT JOIN users u2 ON r.completed_by = u2.id
+                LEFT JOIN users u3 ON r.cancelled_by = u3.id
+                WHERE 1=1";
+        $params = [];
+
+        if ($feeRecordId > 0) {
+            $sql .= " AND r.fee_record_id = :feeId";
+            $params['feeId'] = $feeRecordId;
+        }
+        if ($status !== '' && $status !== 'ALL') {
+            $sql .= " AND r.status = :status";
+            $params['status'] = $status;
+        }
+        if ($semester !== '' && $semester !== 'ALL') {
+            $sql .= " AND sem.id = :semId";
+            $params['semId'] = (int)$semester;
+        }
+
+        $sql .= " ORDER BY r.created_at DESC, r.id DESC";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $refunds = $stmt->fetchAll();
+        json_success($refunds);
+    }
+
     // 1. POST /api/fee-records/{id}/refunds (Create Refund Request)
     if (preg_match('#^/api/fee-records/(\d+)/refunds$#', $path, $m) && $method === 'POST') {
         verify_csrf_token();
