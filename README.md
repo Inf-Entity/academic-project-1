@@ -142,7 +142,8 @@ Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồ
      - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ, gồm: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền).
   5. Mở Terminal / PowerShell và chạy lệnh CLI để khởi tạo tài khoản quản trị viên:
      ```bash
-     php database/seed_users.php
+     cd C:\xampp\htdocs\tuition-system
+     C:\xampp\php\php.exe php database/seed_users.php
      ```
   *(Lưu ý: Bạn có thể re-import `schema.sql` và `seed.sql` nhiều lần liên tiếp mà không gặp lỗi).*
 
