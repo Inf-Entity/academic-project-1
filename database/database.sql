@@ -103,17 +103,19 @@ CREATE TABLE `exemptions` (
 CREATE TABLE `ledger_entries` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `fee_record_id` INT NOT NULL,
-    `entry_type` ENUM('payment', 'reversal') NOT NULL,
+    `entry_type` ENUM('payment', 'reversal', 'transfer_out', 'transfer_in') NOT NULL,
     `amount` BIGINT NOT NULL,
     `method` ENUM('Tiền mặt', 'Chuyển khoản', 'Thẻ') NOT NULL,
     `entry_date` DATE NOT NULL,
     `receipt_no` VARCHAR(20) UNIQUE NULL,
     `reverses_entry_id` INT NULL UNIQUE,
+    `transfer_group_id` CHAR(36) NULL,
     `reason` VARCHAR(200) NULL,
     `note` VARCHAR(255) NULL,
-    `request_id` CHAR(36) NOT NULL UNIQUE,
+    `request_id` VARCHAR(50) NOT NULL UNIQUE,
     `created_by` INT NOT NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_ledger_transfer_group_id` (`transfer_group_id`),
     CONSTRAINT `fk_ledger_entries_fee_records` FOREIGN KEY (`fee_record_id`) REFERENCES `fee_records` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT `fk_ledger_entries_ledger_entries` FOREIGN KEY (`reverses_entry_id`) REFERENCES `ledger_entries` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT `fk_ledger_entries_users` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
@@ -163,11 +165,16 @@ CREATE TABLE `audit_log` (
 
 -- ----------------------------------------------------------------------------
 -- DỮ LIỆU KHỞI TẠO MẪU (SEED DATA)
--- LƯU Ý QUAN TRỌNG:
--- Không chèn tài khoản vào bảng `users` tại đây. Tài khoản quản trị viên được
--- tạo và băm mật khẩu Bcrypt an toàn duy nhất bởi script CLI: database/seed_users.php
--- (Admin accounts are created only by database/seed_users.php, which hashes passwords).
+-- Tài khoản quản trị viên mặc định:
+--   - admin / Admin@123
+--   - staff01 / Staff@123
+-- (Mật khẩu đã băm Bcrypt, có thể khởi tạo lại bất kỳ lúc nào bằng: php database/seed_users.php)
 -- ----------------------------------------------------------------------------
+
+-- 0. Tài khoản Quản trị viên (Users)
+INSERT INTO `users` (`id`, `username`, `password_hash`, `full_name`, `role`, `failed_logins`, `locked_until`, `created_at`) VALUES
+(1, 'admin', '$2y$12$WDDv3BxKcciz9/102tWyPew3Qf6xlwna4PqzlcxODAzGGlaNOS5di', 'Quản trị viên Admin', 'admin', 0, NULL, '2026-08-15 08:00:00'),
+(2, 'staff01', '$2y$12$6Bqyi/l2k1lGDHWX3a0LOeS2.kS58BNx2OYM1zLmZX90jtuXUToU2', 'Cán bộ Staff 01', 'admin', 0, NULL, '2026-08-15 08:00:00');
 
 -- 1. Học kỳ (Semesters)
 INSERT INTO `semesters` (`id`, `term_no`, `academic_year_start`, `created_at`) VALUES
@@ -188,7 +195,8 @@ INSERT INTO `students` (`id`, `student_code`, `full_name`, `name_search`, `class
 (3, 'SV003', 'Lê Hoàng Cường', 'le hoang cuong', 'K21-KT2', '2025-08-20 08:10:00', '2025-08-20 08:10:00'),
 (4, 'SV004', 'Phạm Thị Dung', 'pham thi dung', 'K21-KT2', '2025-08-20 08:15:00', '2025-08-20 08:15:00'),
 (5, 'SV005', 'Nguyễn Thị Hòa', 'nguyen thi hoa', 'K20-CNTT2', '2025-08-20 08:20:00', '2025-08-20 08:20:00'),
-(6, 'SV006', 'Võ Minh Đức', 'vo minh duc', NULL, '2025-08-20 08:25:00', '2025-08-25 08:25:00');
+(6, 'SV006', 'Võ Minh Đức', 'vo minh duc', NULL, '2025-08-20 08:25:00', '2025-08-25 08:25:00'),
+(7, 'SV007', 'Đặng Quốc Huy', 'dang quoc huy', 'K20-CNTT1', '2025-08-20 08:30:00', '2025-08-20 08:30:00');
 
 -- 4. Hồ sơ Học phí (Fee Records)
 INSERT INTO `fee_records` (`id`, `student_id`, `semester_id`, `registered_credits`, `rate_snapshot`, `gross_tuition`, `created_at`, `updated_at`) VALUES
@@ -201,7 +209,9 @@ INSERT INTO `fee_records` (`id`, `student_id`, `semester_id`, `registered_credit
 (7, 5, 2, 14, 820000, 11480000, '2026-02-15 08:40:00', '2026-02-15 08:40:00'),
 (8, 3, 1, 12, 800000, 9600000, '2025-08-25 08:30:00', '2025-08-25 08:30:00'),
 (9, 6, 1, 9, 800000, 7200000, '2025-08-25 08:35:00', '2025-08-25 08:35:00'),
-(10, 2, 1, 15, 800000, 12000000, '2025-08-25 08:40:00', '2025-08-25 08:40:00');
+(10, 2, 1, 15, 800000, 12000000, '2025-08-25 08:40:00', '2025-08-25 08:40:00'),
+(11, 7, 2, 10, 820000, 8200000, '2026-02-15 08:45:00', '2026-02-15 08:45:00'),
+(12, 7, 3, 12, 850000, 10200000, '2026-09-20 08:50:00', '2026-09-20 08:50:00');
 
 -- 5. Miễn giảm Học phí (Exemptions)
 INSERT INTO `exemptions` (`id`, `fee_record_id`, `type`, `value`, `reason`, `created_by`, `updated_at`) VALUES
@@ -210,20 +220,22 @@ INSERT INTO `exemptions` (`id`, `fee_record_id`, `type`, `value`, `reason`, `cre
 (3, 5, 'fixed', 1000000, 'Điều chỉnh miễn giảm sau thanh toán', 1, '2026-09-11 14:00:00'),
 (4, 6, 'percent', 20, 'Học bổng doanh nghiệp', 1, '2026-02-18 09:00:00'),
 (5, 8, 'fixed', 1600000, 'Hỗ trợ học phí kỳ 1', 1, '2025-09-02 10:00:00'),
-(6, 9, 'percent', 100, 'Học bổng toàn phần 100%', 1, '2025-08-28 09:00:00');
+(6, 9, 'percent', 100, 'Học bổng toàn phần 100%', 1, '2025-08-28 09:00:00'),
+(7, 11, 'fixed', 700000, 'Điều chỉnh sau thanh toán', 1, '2026-09-16 10:00:00');
 
 -- 6. Sổ cái giao dịch (Ledger Entries)
-INSERT INTO `ledger_entries` (`id`, `fee_record_id`, `entry_type`, `amount`, `method`, `entry_date`, `receipt_no`, `reverses_entry_id`, `reason`, `note`, `request_id`, `created_by`, `created_at`) VALUES
-(1, 8, 'payment', 9600000, 'Tiền mặt', '2026-09-01', 'PT-20260901-0001', NULL, NULL, 'Thu học phí HK1 2025-2026', 'a1111111-1111-1111-1111-111111111101', 1, '2026-09-01 08:30:00'),
-(2, 10, 'payment', 6000000, 'Chuyển khoản', '2026-09-05', 'PT-20260905-0001', NULL, NULL, 'Đợt 1 HK1 2025-2026', 'a1111111-1111-1111-1111-111111111102', 2, '2026-09-05 09:15:00'),
-(3, 10, 'payment', 6000000, 'Thẻ', '2026-09-05', 'PT-20260905-0002', NULL, NULL, 'Đợt 2 HK1 2025-2026', 'a1111111-1111-1111-1111-111111111103', 1, '2026-09-05 15:30:00'),
-(4, 5, 'payment', 8200000, 'Chuyển khoản', '2026-09-10', 'PT-20260910-0001', NULL, NULL, 'Nộp học phí HK2', 'a1111111-1111-1111-1111-111111111104', 1, '2026-09-10 10:00:00'),
-(5, 6, 'payment', 10496000, 'Tiền mặt', '2026-09-12', 'PT-20260912-0001', NULL, NULL, 'Nộp học phí HK2 đủ', 'a1111111-1111-1111-1111-111111111105', 2, '2026-09-12 11:20:00'),
-(6, 7, 'payment', 5000000, 'Thẻ', '2026-09-15', 'PT-20260915-0001', NULL, NULL, 'Thu học phí SV005', 'a1111111-1111-1111-1111-111111111106', 1, '2026-09-15 14:00:00'),
-(7, 7, 'reversal', 5000000, 'Thẻ', '2026-09-15', NULL, 6, 'Nhập nhầm sinh viên', 'Đảo mục phiếu PT-20260915-0001', 'a1111111-1111-1111-1111-111111111107', 1, '2026-09-15 14:30:00'),
-(8, 1, 'payment', 11475000, 'Tiền mặt', '2026-10-01', 'PT-20261001-0001', NULL, NULL, 'Thanh toán học phí HK1 2026-2027', 'a1111111-1111-1111-1111-111111111108', 1, '2026-10-01 09:00:00'),
-(9, 2, 'payment', 5000000, 'Chuyển khoản', '2026-10-02', 'PT-20261002-0001', NULL, NULL, 'Tạm ứng học phí HK1 2026-2027', 'a1111111-1111-1111-1111-111111111109', 2, '2026-10-02 10:15:00'),
-(10, 4, 'payment', 17849999, 'Thẻ', '2026-10-03', 'PT-20261003-0001', NULL, NULL, 'Thanh toán học phí thiếu 1 đồng', 'a1111111-1111-1111-1111-111111111110', 1, '2026-10-03 16:45:00');
+INSERT INTO `ledger_entries` (`id`, `fee_record_id`, `entry_type`, `amount`, `method`, `entry_date`, `receipt_no`, `reverses_entry_id`, `transfer_group_id`, `reason`, `note`, `request_id`, `created_by`, `created_at`) VALUES
+(1, 8, 'payment', 9600000, 'Tiền mặt', '2026-09-01', 'PT-20260901-0001', NULL, NULL, NULL, 'Thu học phí HK1 2025-2026', 'a1111111-1111-1111-1111-111111111101', 1, '2026-09-01 08:30:00'),
+(2, 10, 'payment', 6000000, 'Chuyển khoản', '2026-09-05', 'PT-20260905-0001', NULL, NULL, NULL, 'Đợt 1 HK1 2025-2026', 'a1111111-1111-1111-1111-111111111102', 2, '2026-09-05 09:15:00'),
+(3, 10, 'payment', 6000000, 'Thẻ', '2026-09-05', 'PT-20260905-0002', NULL, NULL, NULL, 'Đợt 2 HK1 2025-2026', 'a1111111-1111-1111-1111-111111111103', 1, '2026-09-05 15:30:00'),
+(4, 5, 'payment', 8200000, 'Chuyển khoản', '2026-09-10', 'PT-20260910-0001', NULL, NULL, NULL, 'Nộp học phí HK2', 'a1111111-1111-1111-1111-111111111104', 1, '2026-09-10 10:00:00'),
+(5, 6, 'payment', 10496000, 'Tiền mặt', '2026-09-12', 'PT-20260912-0001', NULL, NULL, NULL, 'Nộp học phí HK2 đủ', 'a1111111-1111-1111-1111-111111111105', 2, '2026-09-12 11:20:00'),
+(6, 7, 'payment', 5000000, 'Thẻ', '2026-09-15', 'PT-20260915-0001', NULL, NULL, NULL, 'Thu học phí SV005', 'a1111111-1111-1111-1111-111111111106', 1, '2026-09-15 14:00:00'),
+(7, 7, 'reversal', 5000000, 'Thẻ', '2026-09-15', NULL, 6, NULL, 'Nhập nhầm sinh viên', 'Đảo mục phiếu PT-20260915-0001', 'a1111111-1111-1111-1111-111111111107', 1, '2026-09-15 14:30:00'),
+(8, 1, 'payment', 11475000, 'Tiền mặt', '2026-10-01', 'PT-20261001-0001', NULL, NULL, NULL, 'Thanh toán học phí HK1 2026-2027', 'a1111111-1111-1111-1111-111111111108', 1, '2026-10-01 09:00:00'),
+(9, 2, 'payment', 5000000, 'Chuyển khoản', '2026-10-02', 'PT-20261002-0001', NULL, NULL, NULL, 'Tạm ứng học phí HK1 2026-2027', 'a1111111-1111-1111-1111-111111111109', 2, '2026-10-02 10:15:00'),
+(10, 4, 'payment', 17849999, 'Thẻ', '2026-10-03', 'PT-20261003-0001', NULL, NULL, NULL, 'Thanh toán học phí thiếu 1 đồng', 'a1111111-1111-1111-1111-111111111110', 1, '2026-10-03 16:45:00'),
+(11, 11, 'payment', 8200000, 'Thẻ', '2026-09-16', 'PT-20260916-0001', NULL, NULL, NULL, 'Thu học phí HK2 SV007', 'a1111111-1111-1111-1111-111111111111', 1, '2026-09-16 09:30:00');
 
 -- 7. Yêu cầu Hoàn trả (Refund Requests)
 INSERT INTO `refund_requests` (`id`, `fee_record_id`, `amount`, `reason`, `status`, `request_id`, `created_by`, `created_at`, `completed_by`, `completed_at`, `cancelled_by`, `cancelled_at`, `cancel_reason`) VALUES
@@ -238,6 +250,7 @@ INSERT INTO `receipt_counters` (`day`, `last_no`) VALUES
 ('2026-09-10', 1),
 ('2026-09-12', 1),
 ('2026-09-15', 1),
+('2026-09-16', 1),
 ('2026-10-01', 1),
 ('2026-10-02', 1),
 ('2026-10-03', 1);

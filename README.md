@@ -139,7 +139,7 @@ Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồ
   4. Bấm tab **Nhập** (Import) và thực hiện nhập lần lượt các tệp theo đúng thứ tự:
      - **Bước 1:** Nhập `database/schema.sql` (Khởi tạo cấu trúc bảng, khóa ngoại RESTRICT, chỉ mục).
      - **Bước 2:** Nhập `database/create_app_user.sql` (Tạo người dùng `tuition_user` với quyền tối thiểu).
-     - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ).
+     - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ, gồm: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền).
   5. Mở Terminal / PowerShell và chạy lệnh CLI để khởi tạo tài khoản quản trị viên:
      ```bash
      php database/seed_users.php
@@ -195,7 +195,7 @@ Chạy tại thư mục gốc của dự án:
 php tests/run.php
 ```
 
-Bộ kiểm thử sử dụng cơ sở dữ liệu riêng `tuition_test`, tự động reset bảng và nạp dữ liệu mẫu trước khi kiểm tra. Theo cấu hình được mô tả trong dự án, test runner bao gồm 73 bài kiểm thử tích hợp backend thuộc 15 nhóm quy tắc bảo mật và nghiệp vụ.
+Bộ kiểm thử sử dụng cơ sở dữ liệu riêng `tuition_test`, tự động reset bảng và nạp dữ liệu mẫu trước khi kiểm tra (xác minh số lượng chuẩn: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền). Theo cấu hình được mô tả trong dự án, test runner bao gồm 100 bài kiểm thử tích hợp backend thuộc 16 nhóm quy tắc bảo mật và nghiệp vụ.
 
 Các nội dung được kiểm tra gồm:
 
@@ -251,6 +251,12 @@ Test runner frontend nằm tại `tests/tests.js` và kết quả kiểm thử �
 | 20 | Dừng Apache trong XAMPP rồi thao tác trên giao diện. | Hiển thị thông báo *"Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại kết nối mạng hoặc XAMPP."*; dữ liệu đang nhập không bị mất. |
 | 21 | Dừng MySQL trong XAMPP rồi tải lại trang. | Hiển thị thông báo *"Đã xảy ra lỗi hệ thống. Vui lòng thử lại."*; không để lộ mã nguồn, câu lệnh SQL hoặc stack trace. |
 | 22 | Kiểm tra giao diện ở chiều rộng màn hình 360px. | Bố cục responsive; thanh điều hướng và bảng dữ liệu có thể cuộn ngang mà không làm vỡ giao diện. |
+| 23 | Tạo lại hồ sơ học phí cho SV001 trong HK1 2026-2027. | Thông báo hồ sơ trùng lặp xuất hiện, giá trị trên biểu mẫu được giữ nguyên, nhấn "Mở hồ sơ hiện có" sẽ mở hồ sơ tương ứng. |
+| 24 | Mở hồ sơ SV007 trong HK2 2025-2026. | Cảnh báo nộp thừa (Overpaid) hiển thị, nhấn "Xử lý số tiền thừa" hiển thị số dư thừa khả dụng là 700.000 VND. |
+| 25 | Chuyển 700.000 VND từ HK2 2025-2026 sang HK1 2026-2027 của SV007. | Hộp thoại xác nhận hiển thị bằng tiếng Việt; sau khi đồng ý, chuyển tiền thành công, hồ sơ HK2 chuyển sang Đã thanh toán đủ (đã nộp 7.500.000 VND), hồ sơ HK1 giảm còn nợ xuống 9.500.000 VND. |
+| 26 | Thực hiện hoàn tiền 700.000 VND trên bản dữ liệu mới của SV007 HK2 2025-2026. | Yêu cầu hoàn tiền ở trạng thái chờ duyệt (pending); hồ sơ vẫn giữ cảnh báo nộp thừa cho đến khi duyệt hoàn tất. |
+| 27 | Hủy yêu cầu hoàn tiền đang chờ duyệt của SV007. | Yêu cầu chuyển sang đã hủy; số tiền nộp thừa khả dụng quay trở lại mức 700.000 VND. |
+| 28 | Thử đảo bút toán khoản thu 8.200.000 VND sau khi đã chuyển tiền. | Bị từ chối với thông báo "Không thể đảo bút toán vì số tiền đã được hoàn hoặc chuyển đi." và tổng tiền nộp không bị âm. |
 
 ## Giới hạn đã biết
 

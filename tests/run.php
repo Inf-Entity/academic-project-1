@@ -92,6 +92,10 @@ class ApiTestClient {
         return $this->csrfToken;
     }
 
+    public function getCookieFile(): string {
+        return $this->cookieFile;
+    }
+
     public function request(string $method, string $path, $body = null, array $headers = []): array {
         $url = $this->baseUrl . (str_starts_with($path, '/') ? $path : '/' . $path);
         $ch = curl_init($url);
@@ -194,6 +198,17 @@ function reset_test_database(PDO $pdo): void {
 reset_test_database($rootPdo);
 $pdo = get_db_connection('tuition_test');
 it("Database tuition_test đã được reset và nạp seed data thành công", $pdo instanceof PDO);
+
+$stCount = (int)$pdo->query("SELECT COUNT(*) FROM students")->fetchColumn();
+$frCount = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+$exCount = (int)$pdo->query("SELECT COUNT(*) FROM exemptions")->fetchColumn();
+$leCount = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+$rfCount = (int)$pdo->query("SELECT COUNT(*) FROM refund_requests")->fetchColumn();
+it("Seed data nạp đủ số dòng chuẩn: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền", 
+    $stCount === 7 && $frCount === 12 && $exCount === 7 && $leCount === 11 && $rfCount === 3,
+    ['students' => 7, 'fee_records' => 12, 'exemptions' => 7, 'ledger_entries' => 11, 'refund_requests' => 3],
+    ['students' => $stCount, 'fee_records' => $frCount, 'exemptions' => $exCount, 'ledger_entries' => $leCount, 'refund_requests' => $rfCount]
+);
 
 $api = new ApiTestClient();
 $loginRes = $api->login('admin', 'Admin@123');
@@ -802,6 +817,381 @@ $invDatePayRes = $api->request('POST', '/fee-records/1/payments', [
 it("Ngày thanh toán sai định dạng bị từ chối qua API (HTTP 400)", 
     $invDatePayRes['status'] === 400 && isset($invDatePayRes['body']['error']['fields']['entry_date'])
 );
+
+// ----------------------------------------------------------------------------
+// 16. DUPLICATE PROFILE, REFUND AUDIT & OVERPAID RESOLUTION (PART 1, 2, 3)
+// ----------------------------------------------------------------------------
+suite_header("16. Quản lý hồ sơ trùng lặp, Kiểm toán hoàn tiền & Xử lý số tiền thừa (Parts 1, 2, 3)");
+
+// 1. Duplicate create returns 409 DUPLICATE_FEE_RECORD and inserts no row. Count rows before and after.
+$cntBefore = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+$dupRes = $api->request('POST', '/fee-records', [
+    'student_id'         => 1,
+    'semester_id'        => 3,
+    'registered_credits' => 15,
+]);
+$cntAfter = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+it("Duplicate create trả về HTTP 409 DUPLICATE_FEE_RECORD, message và existing_id", 
+    $dupRes['status'] === 409 && 
+    ($dupRes['body']['error']['code'] ?? '') === 'DUPLICATE_FEE_RECORD' &&
+    ($dupRes['body']['error']['message'] ?? '') === 'Sinh viên này đã có hồ sơ học phí cho học kỳ này.' &&
+    !empty($dupRes['body']['data']['existing_id'])
+);
+it("Duplicate create không ghi thêm dòng vào fee_records", $cntBefore === $cntAfter);
+
+// 2. Two parallel creates for the same student and semester produce exactly one row and one 409.
+$pdo->prepare("INSERT INTO students (student_code, full_name, name_search, class_name, created_at, updated_at) VALUES ('SVPAR1', 'Sinh viên Song song', 'sinh vien song song', 'K20', NOW(), NOW())")->execute();
+$parStudentId = (int)$pdo->lastInsertId();
+$parSemesterId = 1; // HK1 2025-2026 (có định mức 800.000)
+
+// Use 2 separate ApiTestClients with different sessions (admin and staff01) so sessions don't serialize
+$clientA = new ApiTestClient();
+$clientA->login('admin', 'Admin@123');
+$clientB = new ApiTestClient();
+$clientB->login('staff01', 'Staff@123');
+
+$mh = curl_multi_init();
+$bodyJson = json_encode([
+    'student_id'         => $parStudentId,
+    'semester_id'        => $parSemesterId,
+    'registered_credits' => 12
+]);
+
+$chA = curl_init('http://localhost/tuition-system/api/fee-records');
+curl_setopt_array($chA, [
+    CURLOPT_CUSTOMREQUEST  => 'POST',
+    CURLOPT_POSTFIELDS     => $bodyJson,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'X-Tuition-Test-Db: tuition_test',
+        'X-CSRF-Token: ' . $clientA->getCsrfToken()
+    ],
+    CURLOPT_COOKIEFILE     => $clientA->getCookieFile(),
+    CURLOPT_COOKIEJAR      => $clientA->getCookieFile(),
+    CURLOPT_TIMEOUT        => 15
+]);
+
+$chB = curl_init('http://localhost/tuition-system/api/fee-records');
+curl_setopt_array($chB, [
+    CURLOPT_CUSTOMREQUEST  => 'POST',
+    CURLOPT_POSTFIELDS     => $bodyJson,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'X-Tuition-Test-Db: tuition_test',
+        'X-CSRF-Token: ' . $clientB->getCsrfToken()
+    ],
+    CURLOPT_COOKIEFILE     => $clientB->getCookieFile(),
+    CURLOPT_COOKIEJAR      => $clientB->getCookieFile(),
+    CURLOPT_TIMEOUT        => 15
+]);
+
+curl_multi_add_handle($mh, $chA);
+curl_multi_add_handle($mh, $chB);
+
+$running = null;
+do {
+    curl_multi_exec($mh, $running);
+    curl_multi_select($mh);
+} while ($running > 0);
+
+$statusA = curl_getinfo($chA, CURLINFO_HTTP_CODE);
+$statusB = curl_getinfo($chB, CURLINFO_HTTP_CODE);
+curl_multi_remove_handle($mh, $chA);
+curl_multi_remove_handle($mh, $chB);
+curl_multi_close($mh);
+curl_close($chA);
+curl_close($chB);
+
+$statuses = [$statusA, $statusB];
+sort($statuses);
+$parRecordCount = (int)$pdo->query("SELECT COUNT(*) FROM fee_records WHERE student_id = {$parStudentId} AND semester_id = {$parSemesterId}")->fetchColumn();
+
+it("Hai yêu cầu tạo hồ sơ song song cho cùng 1 sinh viên/kỳ cho đúng 1 thành công (201) và 1 bị từ chối 409", 
+    $statuses === [201, 409]
+);
+it("Hai yêu cầu song song tạo chính xác đúng 1 dòng trong cơ sở dữ liệu", $parRecordCount === 1);
+
+// Dọn dẹp student song song
+$pdo->exec("DELETE FROM fee_records WHERE student_id = {$parStudentId}");
+$pdo->exec("DELETE FROM students WHERE id = {$parStudentId}");
+
+// 3. Refund request: amount = excess + 1 rejected; amount = excess accepted; second request for 1 VND rejected while first is pending.
+// SV007 HK2 (fee record 11): net 7.5M, paid 8.2M, excess 700k
+$refOverRes = $api->request('POST', '/fee-records/11/refunds', [
+    'amount'     => 700001,
+    'reason'     => 'Yêu cầu hoàn vượt số dư thừa 1 đồng',
+    'request_id' => generate_uuid()
+]);
+it("Yêu cầu hoàn tiền với amount = excess + 1 bị từ chối (HTTP 422)", $refOverRes['status'] === 422);
+
+$refExactReqId = generate_uuid();
+$refExactRes = $api->request('POST', '/fee-records/11/refunds', [
+    'amount'     => 700000,
+    'reason'     => 'Yêu cầu hoàn đúng số dư thừa 700.000',
+    'request_id' => $refExactReqId
+]);
+it("Yêu cầu hoàn tiền với amount = excess được chấp nhận (HTTP 201 Created)", $refExactRes['status'] === 201);
+$pendingRefundId = $refExactRes['body']['data']['id'] ?? null;
+
+$refSecondRes = $api->request('POST', '/fee-records/11/refunds', [
+    'amount'     => 1,
+    'reason'     => 'Yêu cầu hoàn 1 đồng khi yêu cầu đầu đang chờ duyệt',
+    'request_id' => generate_uuid()
+]);
+it("Yêu cầu hoàn 1 VND thứ hai bị từ chối khi yêu cầu đầu đang chờ duyệt (HTTP 422)", $refSecondRes['status'] === 422);
+
+// 4. Cancel releases excess; a new request for the full excess is accepted.
+$cancelRes = $api->request('POST', "/refunds/{$pendingRefundId}/cancel", [
+    'cancel_reason' => 'Hủy để giải phóng số dư thừa'
+]);
+it("Hủy yêu cầu hoàn tiền đang chờ duyệt thành công (HTTP 200)", $cancelRes['status'] === 200);
+
+$refNewRes = $api->request('POST', '/fee-records/11/refunds', [
+    'amount'     => 700000,
+    'reason'     => 'Yêu cầu hoàn tiền mới sau khi đã hủy yêu cầu cũ',
+    'request_id' => generate_uuid()
+]);
+it("Sau khi hủy, yêu cầu hoàn tiền mới cho toàn bộ số dư thừa (700.000) được chấp nhận (HTTP 201)", $refNewRes['status'] === 201);
+$newRefundId = $refNewRes['body']['data']['id'] ?? null;
+
+// Hủy tiếp để trả SV007 về trạng thái ban đầu sạch
+$api->request('POST', "/refunds/{$newRefundId}/cancel", ['cancel_reason' => 'Dọn dẹp test']);
+
+// 5. Completion re-check concurrency: two pending requests of excess each, completed concurrently, produce exactly one success.
+// Giả lập 2 yêu cầu pending trong DB cho cùng khoản dư thừa 700k
+$concReqA = generate_uuid();
+$concReqB = generate_uuid();
+$pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (11, 700000, 'Pending A', 'pending', :r, 1, NOW())")->execute(['r' => $concReqA]);
+$rfIdA = (int)$pdo->lastInsertId();
+$pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (11, 700000, 'Pending B', 'pending', :r, 1, NOW())")->execute(['r' => $concReqB]);
+$rfIdB = (int)$pdo->lastInsertId();
+
+$cookieCompA = $clientA->getCookieFile();
+$cookieCompB = $clientB->getCookieFile();
+
+$mh2 = curl_multi_init();
+$chCompA = curl_init("http://localhost/tuition-system/api/refunds/{$rfIdA}/complete");
+curl_setopt_array($chCompA, [
+    CURLOPT_CUSTOMREQUEST  => 'POST',
+    CURLOPT_POSTFIELDS     => '{}',
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'X-Tuition-Test-Db: tuition_test',
+        'X-CSRF-Token: ' . $clientA->getCsrfToken()
+    ],
+    CURLOPT_COOKIEFILE     => $cookieCompA,
+    CURLOPT_COOKIEJAR      => $cookieCompA,
+    CURLOPT_TIMEOUT        => 15
+]);
+
+$chCompB = curl_init("http://localhost/tuition-system/api/refunds/{$rfIdB}/complete");
+curl_setopt_array($chCompB, [
+    CURLOPT_CUSTOMREQUEST  => 'POST',
+    CURLOPT_POSTFIELDS     => '{}',
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER     => [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'X-Tuition-Test-Db: tuition_test',
+        'X-CSRF-Token: ' . $clientB->getCsrfToken()
+    ],
+    CURLOPT_COOKIEFILE     => $cookieCompB,
+    CURLOPT_COOKIEJAR      => $cookieCompB,
+    CURLOPT_TIMEOUT        => 15
+]);
+
+curl_multi_add_handle($mh2, $chCompA);
+curl_multi_add_handle($mh2, $chCompB);
+
+$running2 = null;
+do {
+    curl_multi_exec($mh2, $running2);
+    curl_multi_select($mh2);
+} while ($running2 > 0);
+
+$statusCompA = curl_getinfo($chCompA, CURLINFO_HTTP_CODE);
+$statusCompB = curl_getinfo($chCompB, CURLINFO_HTTP_CODE);
+curl_multi_remove_handle($mh2, $chCompA);
+curl_multi_remove_handle($mh2, $chCompB);
+curl_multi_close($mh2);
+curl_close($chCompA);
+curl_close($chCompB);
+
+$compStatuses = [$statusCompA, $statusCompB];
+sort($compStatuses);
+it("Duyệt hoàn tiền đồng thời cho 2 yêu cầu vượt số dư thừa chỉ cho phép đúng 1 thành công (200) và 1 bị từ chối (422)", 
+    $compStatuses === [200, 422]
+);
+
+// Dọn dẹp test đồng thời hoàn tiền trên SV007
+$pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = 11 AND entry_type = 'refund'");
+$pdo->exec("DELETE FROM refund_requests WHERE fee_record_id = 11");
+
+// 8. Transfer validations:
+// - Transfer to self rejected
+$xferSelfRes = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => 11,
+    'amount'               => 100000,
+    'reason'               => 'Chuyển cho chính mình',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển tiền cho chính hồ sơ đó bị từ chối (HTTP 422)", $xferSelfRes['status'] === 422);
+
+// - Transfer across students rejected
+$xferCrossRes = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => 1,
+    'amount'               => 100000,
+    'reason'               => 'Chuyển khác sinh viên',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển tiền giữa hai sinh viên khác nhau bị từ chối (HTTP 422)", $xferCrossRes['status'] === 422);
+
+// - Transfer amount above source available excess rejected
+$xferOverSourceRes = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => 12,
+    'amount'               => 700001,
+    'reason'               => 'Vượt dư thừa nguồn',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển tiền vượt quá số tiền thừa khả dụng của nguồn bị từ chối (HTTP 422)", $xferOverSourceRes['status'] === 422);
+
+// - Transfer to fully paid target rejected
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at) VALUES (7, 1, 10, 800000, 8000000, NOW(), NOW())")->execute();
+$tempTargetId = (int)$pdo->lastInsertId();
+$pdo->prepare("INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, request_id, created_by, created_at) VALUES (:f, 'payment', 8000000, 'Tiền mặt', CURDATE(), :req, 1, NOW())")->execute([
+    'f'   => $tempTargetId,
+    'req' => generate_uuid()
+]);
+$xferPaidTargetRes = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => $tempTargetId,
+    'amount'               => 100000,
+    'reason'               => 'Chuyển sang hồ sơ đã thanh toán đủ',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển tiền sang hồ sơ đích đã thanh toán đủ (outstanding = 0) bị từ chối (HTTP 422)", $xferPaidTargetRes['status'] === 422);
+$pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = {$tempTargetId}");
+$pdo->exec("DELETE FROM fee_records WHERE id = {$tempTargetId}");
+
+// 9. Transfer with same request_id twice creates two rows only once (Idempotency)
+$xferIdempReqId = generate_uuid();
+$xferCall1 = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => 12,
+    'amount'               => 700000,
+    'reason'               => 'Chuyển tiền thừa sang HK1 2026-2027',
+    'request_id'           => $xferIdempReqId
+]);
+it("Chuyển tiền lần đầu thành công (HTTP 201 Created)", $xferCall1['status'] === 201);
+
+$xferCall2 = $api->request('POST', '/fee-records/11/transfers', [
+    'target_fee_record_id' => 12,
+    'amount'               => 700000,
+    'reason'               => 'Chuyển tiền thừa sang HK1 2026-2027',
+    'request_id'           => $xferIdempReqId
+]);
+it("Gọi lại chuyển tiền với cùng request_id trả về HTTP 200 Idempotent", $xferCall2['status'] === 200);
+
+$xferLedgerCount = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE request_id LIKE '{$xferIdempReqId}%'")->fetchColumn();
+it("Chuyển tiền với cùng request_id chỉ tạo đúng 2 bút toán (transfer_out và transfer_in)", $xferLedgerCount === 2);
+
+// 7. Transfer effect & reconciliation:
+// - source total_paid drops; target outstanding drops by the same amount; both rows share transfer_group_id; report totals reconcile.
+$sourceSumAfter = fetch_fee_record_summary($pdo, 11);
+$targetSumAfter = fetch_fee_record_summary($pdo, 12);
+
+$sourcePaidDrops = ((int)$sourceSumAfter['total_paid'] === 7500000); // 8.2M - 700k
+$targetOutstandingDrops = ((int)$targetSumAfter['total_paid'] === 700000 && (int)$targetSumAfter['net_due'] - 700000 === 9500000);
+
+$xferEntries = $pdo->query("SELECT id, fee_record_id, entry_type, amount, receipt_no, transfer_group_id FROM ledger_entries WHERE request_id LIKE '{$xferIdempReqId}%' ORDER BY id ASC")->fetchAll();
+$sharedGroupId = (!empty($xferEntries[0]['transfer_group_id']) && $xferEntries[0]['transfer_group_id'] === $xferEntries[1]['transfer_group_id']);
+$noReceiptNumbers = (empty($xferEntries[0]['receipt_no']) && empty($xferEntries[1]['receipt_no']));
+
+it("Sau khi chuyển: hồ sơ nguồn (HK2) giảm total_paid về 7.500.000 (Fully Paid), hồ sơ đích (HK1) giảm nợ còn 9.500.000", 
+    $sourcePaidDrops && $targetOutstandingDrops
+);
+it("Hai bút toán transfer_out và transfer_in cùng chung transfer_group_id và không có số biên lai", 
+    $sharedGroupId && $noReceiptNumbers
+);
+
+// Đối soát báo cáo sau chuyển khoản
+$repAllRes = $api->request('GET', '/reports/summary?semester=ALL');
+$repDataAll = $repAllRes['body']['data'] ?? [];
+$repReconciled = ((int)($repDataAll['collected'] ?? 0) + (int)($repDataAll['outstanding'] ?? 0) === (int)($repDataAll['receivable'] ?? 0)) && ($repDataAll['reconciles'] ?? false);
+it("Sau khi chuyển khoản tiền thừa, báo cáo tài chính toàn trường vẫn đối soát cân bằng tuyệt đối", $repReconciled);
+
+// 6. Reversal of a payment whose money was refunded or transferred is rejected; total_paid never becomes negative.
+$pay11RevRes = $api->request('POST', '/ledger/11/reversal', [
+    'reason'     => 'Đảo mục phiếu thu 8.2M sau khi tiền đã bị chuyển',
+    'request_id' => generate_uuid()
+]);
+$sourceSumAfterRevAttempt = fetch_fee_record_summary($pdo, 11);
+it("Đảo mục thanh toán khi số tiền đã được chuyển/hoàn bị từ chối với HTTP 422", 
+    $pay11RevRes['status'] === 422 && 
+    ($pay11RevRes['body']['error']['message'] ?? '') === 'Không thể đảo bút toán vì số tiền đã được hoàn hoặc chuyển đi.'
+);
+it("total_paid của hồ sơ nguồn không bao giờ bị âm sau khi đảo mục bị từ chối", (int)$sourceSumAfterRevAttempt['total_paid'] >= 0);
+
+// 10. Transfer rows cannot be reversed.
+$outEntryId = (int)$xferEntries[0]['id'];
+$revTransferRes = $api->request('POST', "/ledger/{$outEntryId}/reversal", [
+    'reason'     => 'Thử đảo bút toán chuyển khoản',
+    'request_id' => generate_uuid()
+]);
+it("Bút toán chuyển khoản nội bộ không thể bị đảo mục (HTTP 422)", 
+    $revTransferRes['status'] === 422 && 
+    ($revTransferRes['body']['error']['message'] ?? '') === 'Không thể đảo bút toán chuyển khoản nội bộ.'
+);
+
+// 11. Pending refund and transfer together never exceed available excess.
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at) VALUES (7, 1, 10, 800000, 8000000, NOW(), NOW())")->execute();
+$comboSourceId = (int)$pdo->lastInsertId();
+// Nộp 9.000.000 (net = 8.0M => excess = 1.000.000)
+$pdo->prepare("INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, request_id, created_by, created_at) VALUES (:f, 'payment', 9000000, 'Tiền mặt', CURDATE(), :req, 1, NOW())")->execute([
+    'f'   => $comboSourceId,
+    'req' => generate_uuid()
+]);
+// Tạo pending refund 400.000 -> available excess còn lại: 600.000
+$pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (:f, 400000, 'Pending combo', 'pending', :req, 1, NOW())")->execute([
+    'f'   => $comboSourceId,
+    'req' => generate_uuid()
+]);
+
+// Thử transfer 600.001 -> Phải bị từ chối 422
+$comboOverRes = $api->request('POST', "/fee-records/{$comboSourceId}/transfers", [
+    'target_fee_record_id' => 12,
+    'amount'               => 600001,
+    'reason'               => 'Chuyển vượt available excess khi có pending refund',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển tiền vượt available excess (excess - pending) bị từ chối (HTTP 422)", $comboOverRes['status'] === 422);
+
+// Transfer đúng 600.000 -> Thành công 201
+$comboExactRes = $api->request('POST', "/fee-records/{$comboSourceId}/transfers", [
+    'target_fee_record_id' => 12,
+    'amount'               => 600000,
+    'reason'               => 'Chuyển đúng available excess',
+    'request_id'           => generate_uuid()
+]);
+it("Chuyển đúng available excess còn lại (600.000) thành công (HTTP 201)", $comboExactRes['status'] === 201);
+
+// Sau khi transfer 600.000, available excess = 0. Thử transfer thêm 1 VND -> bị từ chối 422
+$comboZeroRes = $api->request('POST', "/fee-records/{$comboSourceId}/transfers", [
+    'target_fee_record_id' => 12,
+    'amount'               => 1,
+    'reason'               => 'Chuyển khi available excess = 0',
+    'request_id'           => generate_uuid()
+]);
+it("Sau khi pending refund + transfer đã dùng hết excess, chuyển thêm 1 VND bị từ chối (HTTP 422)", $comboZeroRes['status'] === 422);
+
+// Dọn dẹp hồ sơ combo
+$pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = {$comboSourceId}");
+$pdo->exec("DELETE FROM refund_requests WHERE fee_record_id = {$comboSourceId}");
+$pdo->exec("DELETE FROM fee_records WHERE id = {$comboSourceId}");
 
 // ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ

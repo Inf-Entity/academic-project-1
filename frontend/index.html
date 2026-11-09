@@ -607,6 +607,13 @@
       <form id="fee-form" novalidate>
         <input type="hidden" id="fee-edit-id">
 
+        <!-- Thông báo hồ sơ trùng lặp (Part 1: persistent notification, dismissible by Esc and close button) -->
+        <div id="fee-duplicate-top-alert" class="alert-box alert-danger" role="alert" aria-live="assertive" style="display:none; margin-bottom: 1rem; position: relative; padding: 0.75rem 2rem 0.75rem 0.75rem; border: 1px solid #ef4444; border-radius: 6px; background-color: #fee2e2; color: #991b1b;">
+          <button type="button" id="btn-close-fee-duplicate-alert" aria-label="Đóng cảnh báo" style="position: absolute; top: 8px; right: 8px; background: transparent; border: none; font-size: 1.25rem; cursor: pointer; line-height: 1; color: inherit;">&times;</button>
+          <p id="fee-duplicate-top-msg" style="margin: 0 0 0.5rem 0; font-weight: 600;">Sinh viên này đã có hồ sơ học phí cho học kỳ này.</p>
+          <button type="button" id="btn-open-existing-fee" class="btn btn-sm btn-primary">Mở hồ sơ hiện có</button>
+        </div>
+
         <div class="form-group">
           <label for="fee-student-select">Sinh viên <span class="required">*</span></label>
           <select id="fee-student-select" name="studentId" required aria-describedby="fee-student-error">
@@ -621,6 +628,11 @@
             <option value="">-- Chọn học kỳ có định mức --</option>
           </select>
           <span id="fee-semester-error" class="error-msg" aria-live="polite"></span>
+          <!-- Cảnh báo trực tiếp trước khi submit (Part 1 inline warning) -->
+          <div id="fee-duplicate-inline-warning" class="inline-warning" style="display:none; color: #b45309; font-size: 0.875rem; margin-top: 0.35rem; background: #fef3c7; border: 1px solid #fde68a; border-radius: 4px; padding: 0.35rem 0.5rem;">
+            <span>Sinh viên đã có hồ sơ cho học kỳ này. </span>
+            <a href="#" id="link-existing-fee-record" style="font-weight: 600; text-decoration: underline; color: #92400e;">Xem hồ sơ hiện có</a>
+          </div>
         </div>
 
         <div class="form-row">
@@ -925,6 +937,113 @@
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="btn-cancel-reversal">Hủy</button>
           <button type="submit" class="btn btn-danger" id="btn-confirm-reversal">Xác nhận Đảo mục</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Xử lý Số tiền thừa (Module 4 / Part 3) -->
+  <dialog id="modal-overpaid-resolution" aria-labelledby="modal-overpaid-title">
+    <div class="modal-content" style="max-width: 680px;">
+      <div class="modal-header">
+        <h2 id="modal-overpaid-title">Xử lý Số tiền thừa</h2>
+        <button type="button" class="btn-close" id="btn-close-overpaid-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="overpaid-form" novalidate>
+        <input type="hidden" id="overpaid-fee-id">
+
+        <!-- Thông tin hồ sơ hiện tại -->
+        <div class="info-card">
+          <div class="info-grid">
+            <div>Sinh viên: <strong id="overpaid-student-name">...</strong></div>
+            <div>Học kỳ: <strong id="overpaid-semester">...</strong></div>
+            <div>Phải nộp (Net Due): <strong id="overpaid-net-due">0 ₫</strong></div>
+            <div>Đã nộp (Total Paid): <strong id="overpaid-total-paid">0 ₫</strong></div>
+            <div>Tiền thừa (Excess): <strong id="overpaid-excess">0 ₫</strong></div>
+            <div>Đang chờ hoàn (Pending): <strong id="overpaid-pending-refund">0 ₫</strong></div>
+            <div class="col-full text-highlight">
+              Số dư thừa khả dụng (Available Excess): <strong id="overpaid-available-excess">0 ₫</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Chọn phương án giải quyết <span class="required">*</span></label>
+          <div class="radio-group" style="display: flex; gap: 2rem; margin-top: 0.5rem;">
+            <label class="radio-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="radio" name="resolutionOption" value="refund" id="radio-res-refund">
+              <span>Phương án A: Hoàn tiền</span>
+            </label>
+            <label class="radio-label" style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+              <input type="radio" name="resolutionOption" value="transfer" id="radio-res-transfer">
+              <span>Phương án B: Chuyển sang hồ sơ khác</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Option A: Hoàn tiền -->
+        <div id="section-res-refund" class="option-section" style="display: none; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; background: #fafafa;">
+          <h4 style="margin-top: 0; margin-bottom: 0.75rem;">Phương án A: Hoàn tiền</h4>
+          <div class="form-group">
+            <label for="res-refund-amount">Số tiền hoàn (VND) <span class="required">*</span></label>
+            <input type="text" id="res-refund-amount" name="refundAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control">
+            <span id="res-refund-amount-error" class="error-msg" aria-live="polite"></span>
+          </div>
+          <div class="form-group">
+            <label for="res-refund-reason">Lý do hoàn tiền (tối đa 200 ký tự) <span class="required">*</span></label>
+            <textarea id="res-refund-reason" name="refundReason" rows="2" maxlength="200" placeholder="VD: Hoàn trả số tiền học phí nộp thừa cho sinh viên" class="form-control"></textarea>
+            <span id="res-refund-reason-error" class="error-msg" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <!-- Option B: Chuyển sang hồ sơ khác -->
+        <div id="section-res-transfer" class="option-section" style="display: none; border: 1px solid var(--border-color, #e2e8f0); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; background: #fafafa;">
+          <h4 style="margin-top: 0; margin-bottom: 0.75rem;">Phương án B: Chuyển sang hồ sơ khác</h4>
+          <div class="form-group">
+            <label for="res-target-select">Chọn hồ sơ đích tiếp nhận <span class="required">*</span></label>
+            <select id="res-target-select" name="targetFeeRecordId" class="form-control">
+              <option value="">-- Chọn hồ sơ học phí của sinh viên --</option>
+            </select>
+            <span id="res-target-error" class="error-msg" aria-live="polite"></span>
+          </div>
+          <div id="res-target-info-box" class="info-card" style="margin-bottom: 0.75rem; display: none;">
+            <p>Học kỳ đích: <strong id="res-target-sem-label">...</strong></p>
+            <p>Phải nộp (Net Due): <strong id="res-target-net">0 ₫</strong></p>
+            <p>Đã nộp (Total Paid): <strong id="res-target-paid">0 ₫</strong></p>
+            <p class="text-highlight">Số tiền còn nợ (Outstanding): <strong id="res-target-outstanding">0 ₫</strong></p>
+          </div>
+          <div class="form-group">
+            <label for="res-transfer-amount">Số tiền chuyển (VND) <span class="required">*</span></label>
+            <input type="text" id="res-transfer-amount" name="transferAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control">
+            <span id="res-transfer-amount-error" class="error-msg" aria-live="polite"></span>
+          </div>
+          <div class="form-group">
+            <label for="res-transfer-reason">Lý do chuyển (tối đa 200 ký tự) <span class="required">*</span></label>
+            <textarea id="res-transfer-reason" name="transferReason" rows="2" maxlength="200" placeholder="VD: Chuyển tiền thừa sang học phí học kỳ tiếp theo" class="form-control"></textarea>
+            <span id="res-transfer-reason-error" class="error-msg" aria-live="polite"></span>
+          </div>
+
+          <!-- Bảng dự tính số dư sau khi chuyển (Preview resulting balances) -->
+          <div id="res-transfer-preview-box" class="calc-preview-box" style="margin-top: 0.75rem; display: none;">
+            <div class="calc-row">
+              <span>Hồ sơ nguồn (<span id="preview-source-sem">...</span>) sau chuyển:</span>
+              <span>Đã nộp: <strong id="preview-source-paid">0 ₫</strong> | Dư thừa: <strong id="preview-source-excess">0 ₫</strong></span>
+            </div>
+            <div class="calc-row">
+              <span>Hồ sơ đích (<span id="preview-target-sem">...</span>) sau chuyển:</span>
+              <span>Đã nộp: <strong id="preview-target-paid">0 ₫</strong> | Còn nợ: <strong id="preview-target-outstanding">0 ₫</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chú thích trung lập bắt buộc -->
+        <div class="alert-box alert-info" style="font-size: 0.875rem; margin-bottom: 1rem; background-color: #f0f9ff; border: 1px solid #bae6fd; color: #0369a1; padding: 0.75rem; border-radius: 6px;">
+          ℹ️ <strong>Lưu ý:</strong> Hoàn tiền cần duyệt để hoàn tất. Chuyển sang hồ sơ khác có hiệu lực ngay và không thể hoàn tác trên giao diện.
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-overpaid">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-overpaid" disabled>Xác nhận thực hiện</button>
         </div>
       </form>
     </div>

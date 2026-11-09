@@ -26,16 +26,20 @@ function json_success($data = null, int $statusCode = 200): void {
     exit;
 }
 
-function json_error(string $message, string $code = 'ERROR', int $statusCode = 400, ?array $fields = null): void {
+function json_error(string $message, string $code = 'ERROR', int $statusCode = 400, ?array $fields = null, $data = null): void {
     send_security_headers();
     http_response_code($statusCode);
-    echo json_encode([
+    $payload = [
         'ok'    => false,
         'error' => [
             'code'    => $code,
             'message' => $message,
             'fields'  => $fields !== null ? $fields : (object)[]
         ]
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    ];
+    if ($data !== null) {
+        $payload['data'] = $data;
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }

@@ -391,10 +391,10 @@
     }
 
     tbody.innerHTML = records.map(r => {
-      let badgeClass = 'badge-danger';
-      if (r.status === 'Partially Paid') badgeClass = 'badge-warning';
-      else if (r.status === 'Fully Paid') badgeClass = 'badge-success';
-      else if (r.is_overpaid) badgeClass = 'badge-info';
+      let badgeClass = 'status-badge status-unpaid badge badge-danger';
+      if (r.is_overpaid) badgeClass = 'status-badge status-overpaid badge badge-info';
+      else if (r.status === 'Partially Paid') badgeClass = 'status-badge status-partial badge badge-warning';
+      else if (r.status === 'Fully Paid') badgeClass = 'status-badge status-paid badge badge-success';
 
       return `
         <tr>
@@ -407,7 +407,7 @@
           <td class="text-right"><strong>${Calc.formatVND(r.net_due)}</strong></td>
           <td class="text-right text-success">${Calc.formatVND(r.total_paid)}</td>
           <td class="text-right text-danger">${Calc.formatVND(r.outstanding)}</td>
-          <td><span class="badge ${badgeClass}">${escapeHTML(r.status_label)}</span></td>
+          <td><span class="${badgeClass}">${r.is_overpaid ? '⚠️ ' : ''}${escapeHTML(r.status_label)}</span></td>
         </tr>
       `;
     }).join('');
@@ -693,10 +693,14 @@
     }
 
     tbody.innerHTML = records.map(r => {
-      let badgeClass = 'badge-danger';
-      if (r.status === 'Partially Paid') badgeClass = 'badge-warning';
-      else if (r.status === 'Fully Paid') badgeClass = 'badge-success';
-      else if (r.is_overpaid) badgeClass = 'badge-info';
+      let badgeClass = 'status-badge status-unpaid badge badge-danger';
+      if (r.is_overpaid) {
+        badgeClass = 'status-badge status-overpaid badge badge-info';
+      } else if (r.status === 'Partially Paid') {
+        badgeClass = 'status-badge status-partial badge badge-warning';
+      } else if (r.status === 'Fully Paid') {
+        badgeClass = 'status-badge status-paid badge badge-success';
+      }
 
       return `
         <tr>
@@ -711,13 +715,13 @@
           <td class="text-right text-primary">${Calc.formatVND(r.total_paid)}</td>
           <td class="text-right text-danger">${Calc.formatVND(r.outstanding)}</td>
           <td>
-            <span class="badge ${badgeClass}">${escapeHTML(r.status_label)}</span>
+            <span class="${badgeClass}">${r.is_overpaid ? '⚠️ ' : ''}${escapeHTML(r.status_label)}</span>
             ${r.is_overpaid ? `<br><small class="text-danger font-weight-bold">Thừa: ${Calc.formatVND(r.overpaid_amount)}</small>` : ''}
           </td>
           <td class="text-center table-actions-cell">
             <button type="button" class="btn btn-sm btn-outline-info btn-exempt-fee" data-id="${r.fee_record_id}">🎁 Miễn giảm</button>
             <button type="button" class="btn btn-sm btn-outline-success btn-pay-fee" data-id="${r.fee_record_id}">💳 Thu tiền</button>
-            ${r.is_overpaid ? `<button type="button" class="btn btn-sm btn-outline-warning btn-refund-fee" data-id="${r.fee_record_id}">↩️ Hoàn tiền</button>` : ''}
+            ${(r.is_overpaid && (r.overpaid_amount - (r.pending_refunds_sum || 0) > 0)) ? `<button type="button" class="btn btn-sm btn-outline-warning btn-resolve-excess" data-id="${r.fee_record_id}">⚖️ Xử lý số tiền thừa</button>` : ''}
           </td>
         </tr>
       `;
@@ -732,9 +736,73 @@
     tbody.querySelectorAll('.btn-refund-fee').forEach(btn => {
       btn.addEventListener('click', () => openRefundModalWithFee(btn.dataset.id));
     });
+    tbody.querySelectorAll('.btn-resolve-excess').forEach(btn => {
+      btn.addEventListener('click', () => openOverpaidResolutionModal(btn.dataset.id));
+    });
+  }
+
+  let _lastDuplicateExistingId = null;
+
+  async function checkDuplicateFeeRecord() {
+    const studentSelect = document.getElementById('fee-student-select');
+    const semesterSelect = document.getElementById('fee-semester-select');
+    const warningEl = document.getElementById('fee-duplicate-inline-warning');
+    const linkEl = document.getElementById('link-existing-fee-record');
+
+    if (!studentSelect || !semesterSelect || !warningEl) return;
+
+    const studentId = studentSelect.value;
+    const semesterId = semesterSelect.value;
+
+    if (!studentId || !semesterId) {
+      warningEl.style.display = 'none';
+      return;
+    }
+
+    try {
+      const res = await Api.get(`/fee-records?student=${encodeURIComponent(studentId)}&semester=${encodeURIComponent(semesterId)}`);
+      if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
+        const existing = res.data[0];
+        _lastDuplicateExistingId = existing.fee_record_id || existing.id;
+        warningEl.style.display = 'block';
+        if (linkEl) {
+          linkEl.onclick = (e) => {
+            e.preventDefault();
+            openExistingFeeRecord(_lastDuplicateExistingId);
+          };
+        }
+      } else {
+        warningEl.style.display = 'none';
+      }
+    } catch (e) {
+      warningEl.style.display = 'none';
+    }
+  }
+
+  async function openExistingFeeRecord(feeRecordId) {
+    if (!feeRecordId) return;
+    document.getElementById('modal-fee')?.close();
+    const tabBtn = document.getElementById('tab-fees');
+    if (tabBtn) tabBtn.click();
+
+    // Reset filters so the record is guaranteed to be rendered in the table
+    const filterSem = document.getElementById('fee-filter-semester');
+    if (filterSem) filterSem.value = 'ALL';
+    const searchInput = document.getElementById('fee-search-student');
+    if (searchInput) searchInput.value = '';
+
+    await loadFeesData();
+    const targetRow = document.querySelector(`button[data-id="${feeRecordId}"]`)?.closest('tr');
+    if (targetRow) {
+      targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      targetRow.style.backgroundColor = '#fef08a';
+      setTimeout(() => { targetRow.style.backgroundColor = ''; }, 3000);
+    }
+    showToast(`Đã mở hồ sơ học phí #${feeRecordId}`);
   }
 
   function openFeeModal() {
+    _lastDuplicateExistingId = null;
     const modal = document.getElementById('modal-fee');
     const form = document.getElementById('fee-form');
     Api.clearFieldErrors(form);
@@ -742,6 +810,11 @@
     delete form.dataset.editId;
     setElementText('fee-gross-preview', '0 ₫');
     document.getElementById('fee-rate-display').value = '';
+
+    const alertEl = document.getElementById('fee-duplicate-top-alert');
+    if (alertEl) alertEl.style.display = 'none';
+    const warningEl = document.getElementById('fee-duplicate-inline-warning');
+    if (warningEl) warningEl.style.display = 'none';
 
     modal.showModal();
   }
@@ -761,6 +834,8 @@
     rateDisplay.value = price ? Calc.formatVND(price) : 'Chưa có định mức';
     const gross = Calc.calculateGross(credits, price);
     grossPreview.textContent = Calc.formatVND(gross);
+
+    checkDuplicateFeeRecord();
   }
 
   async function handleFeeSubmit(e) {
@@ -768,6 +843,9 @@
     const form = document.getElementById('fee-form');
     const btn = document.getElementById('btn-save-fee');
     Api.clearFieldErrors(form);
+
+    const alertEl = document.getElementById('fee-duplicate-top-alert');
+    if (alertEl) alertEl.style.display = 'none';
 
     const body = {
       student_id: form.studentId.value,
@@ -781,8 +859,22 @@
       document.getElementById('modal-fee').close();
       loadFeesData();
     } catch (err) {
-      if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      if (err.code === 'DUPLICATE_FEE_RECORD' || err.status === 409) {
+        if (alertEl) {
+          const msgEl = document.getElementById('fee-duplicate-top-msg');
+          if (msgEl) msgEl.textContent = err.message || 'Sinh viên này đã có hồ sơ học phí cho học kỳ này.';
+          alertEl.style.display = 'block';
+          const existingId = err.data?.data?.existing_id || err.data?.existing_id || _lastDuplicateExistingId;
+          const openExistingBtn = document.getElementById('btn-open-existing-fee');
+          if (openExistingBtn) {
+            openExistingBtn.onclick = () => openExistingFeeRecord(existingId);
+          }
+        }
+      } else if (err.fields) {
+        Api.renderFieldErrors(form, err.fields);
+      } else {
+        showToast(err.message, true);
+      }
     }
   }
 
@@ -1091,6 +1183,326 @@
     );
   }
 
+  /* ==========================================================================
+     XỬ LÝ SỐ TIỀN THỪA (OVERPAID RESOLUTION: REFUND OR TRANSFER)
+     ========================================================================== */
+
+  let currentResolutionFee = null;
+  let currentResolutionTargets = [];
+
+  async function openOverpaidResolutionModal(feeRecordId) {
+    const modal = document.getElementById('modal-overpaid-resolution');
+    const form = document.getElementById('overpaid-form');
+    if (!modal || !form) return;
+
+    Api.clearFieldErrors(form);
+    form.reset();
+
+    try {
+      const res = await Api.get(`/fee-records/${feeRecordId}`);
+      if (!res.ok || !res.data) return;
+      const fee = res.data;
+      currentResolutionFee = fee;
+
+      const netDue = Math.max(0, parseInt(fee.net_due, 10) || 0);
+      const totalPaid = Math.max(0, parseInt(fee.total_paid, 10) || 0);
+      const excess = Math.max(0, totalPaid - netDue);
+      const pendingRefund = Math.max(0, parseInt(fee.pending_refunds_sum, 10) || 0);
+      const availableExcess = Math.max(0, excess - pendingRefund);
+
+      if (availableExcess <= 0) {
+        showToast('Hồ sơ không có số tiền thừa khả dụng để xử lý.', true);
+        return;
+      }
+
+      document.getElementById('overpaid-fee-id').value = fee.fee_record_id;
+      setElementText('overpaid-student-name', `${fee.student_code} - ${fee.full_name}`);
+      setElementText('overpaid-semester', fee.semester_label);
+      setElementText('overpaid-net-due', Calc.formatVND(netDue));
+      setElementText('overpaid-total-paid', Calc.formatVND(totalPaid));
+      setElementText('overpaid-excess', Calc.formatVND(excess));
+      setElementText('overpaid-pending-refund', Calc.formatVND(pendingRefund));
+      setElementText('overpaid-available-excess', Calc.formatVND(availableExcess));
+
+      // Fetch student's other fee records
+      const stRes = await Api.get(`/fee-records?student=${encodeURIComponent(fee.student_id)}`);
+      let otherRecords = [];
+      if (stRes.ok && Array.isArray(stRes.data)) {
+        otherRecords = stRes.data.filter(r => String(r.fee_record_id) !== String(fee.fee_record_id));
+      }
+
+      // Sort targets: nearest later semester first by (academic_year_start, term_no)
+      otherRecords.sort((a, b) => {
+        const aLater = (a.academic_year_start > fee.academic_year_start) || (a.academic_year_start === fee.academic_year_start && a.term_no > fee.term_no);
+        const bLater = (b.academic_year_start > fee.academic_year_start) || (b.academic_year_start === fee.academic_year_start && b.term_no > fee.term_no);
+
+        if (aLater && !bLater) return -1;
+        if (!aLater && bLater) return 1;
+
+        if (aLater && bLater) {
+          if (a.academic_year_start !== b.academic_year_start) return a.academic_year_start - b.academic_year_start;
+          return a.term_no - b.term_no;
+        }
+
+        if (a.academic_year_start !== b.academic_year_start) return b.academic_year_start - a.academic_year_start;
+        return b.term_no - a.term_no;
+      });
+
+      currentResolutionTargets = otherRecords;
+
+      // Populate target select
+      const targetSelect = document.getElementById('res-target-select');
+      targetSelect.innerHTML = '<option value="">-- Chọn hồ sơ học phí của sinh viên --</option>';
+      otherRecords.forEach(t => {
+        const isLater = (t.academic_year_start > fee.academic_year_start) || (t.academic_year_start === fee.academic_year_start && t.term_no > fee.term_no);
+        const tag = isLater ? ' [Kỳ kế tiếp]' : '';
+        const opt = document.createElement('option');
+        opt.value = t.fee_record_id;
+        opt.textContent = `${t.semester_label}${tag} — Phải nộp: ${Calc.formatVND(t.net_due)}, Đã nộp: ${Calc.formatVND(t.total_paid)}, Còn nợ: ${Calc.formatVND(t.outstanding)}`;
+        targetSelect.appendChild(opt);
+      });
+
+      // Reset options - neither option checked initially
+      document.getElementById('radio-res-refund').checked = false;
+      document.getElementById('radio-res-transfer').checked = false;
+      document.getElementById('section-res-refund').style.display = 'none';
+      document.getElementById('section-res-transfer').style.display = 'none';
+      document.getElementById('res-target-info-box').style.display = 'none';
+      document.getElementById('res-transfer-preview-box').style.display = 'none';
+      document.getElementById('btn-submit-overpaid').disabled = true;
+
+      // Defaults
+      document.getElementById('res-refund-amount').value = Calc.formatVND(availableExcess).replace('₫', '').trim();
+      document.getElementById('res-refund-reason').value = 'Hoàn trả số tiền học phí nộp thừa';
+      document.getElementById('res-transfer-amount').value = '';
+      document.getElementById('res-transfer-reason').value = 'Chuyển tiền thừa sang học phí học kỳ tiếp theo';
+
+      modal.showModal();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  }
+
+  function updateResolutionUI() {
+    const isRefund = document.getElementById('radio-res-refund').checked;
+    const isTransfer = document.getElementById('radio-res-transfer').checked;
+    const sectionRefund = document.getElementById('section-res-refund');
+    const sectionTransfer = document.getElementById('section-res-transfer');
+    const submitBtn = document.getElementById('btn-submit-overpaid');
+
+    if (sectionRefund) sectionRefund.style.display = isRefund ? 'block' : 'none';
+    if (sectionTransfer) sectionTransfer.style.display = isTransfer ? 'block' : 'none';
+
+    if (!isRefund && !isTransfer) {
+      if (submitBtn) submitBtn.disabled = true;
+      return;
+    }
+
+    if (isRefund) {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Tạo yêu cầu hoàn tiền';
+      }
+      return;
+    }
+
+    if (isTransfer) {
+      if (submitBtn) {
+        submitBtn.textContent = 'Xác nhận chuyển sang hồ sơ khác';
+      }
+      updateTransferPreview();
+    }
+  }
+
+  function updateTransferPreview(isTargetChange = false) {
+    const targetSelect = document.getElementById('res-target-select');
+    const targetId = targetSelect?.value;
+    const targetInfoBox = document.getElementById('res-target-info-box');
+    const previewBox = document.getElementById('res-transfer-preview-box');
+    const submitBtn = document.getElementById('btn-submit-overpaid');
+    const amountInput = document.getElementById('res-transfer-amount');
+
+    if (!targetId || !currentResolutionFee) {
+      if (targetInfoBox) targetInfoBox.style.display = 'none';
+      if (previewBox) previewBox.style.display = 'none';
+      if (submitBtn) submitBtn.disabled = true;
+      return;
+    }
+
+    const target = currentResolutionTargets.find(t => String(t.fee_record_id) === String(targetId));
+    if (!target) {
+      if (targetInfoBox) targetInfoBox.style.display = 'none';
+      if (previewBox) previewBox.style.display = 'none';
+      if (submitBtn) submitBtn.disabled = true;
+      return;
+    }
+
+    if (targetInfoBox) targetInfoBox.style.display = 'block';
+    setElementText('res-target-sem-label', target.semester_label);
+    setElementText('res-target-net', Calc.formatVND(target.net_due));
+    setElementText('res-target-paid', Calc.formatVND(target.total_paid));
+    setElementText('res-target-outstanding', Calc.formatVND(target.outstanding));
+
+    const sourceExcess = Math.max(0, currentResolutionFee.total_paid - currentResolutionFee.net_due);
+    const sourcePending = currentResolutionFee.pending_refunds_sum || 0;
+    const availableExcess = Math.max(0, sourceExcess - sourcePending);
+    const targetOutstanding = Math.max(0, target.outstanding);
+
+    if (isTargetChange || !amountInput.value || Calc.parseFormattedCurrency(amountInput.value) <= 0) {
+      const defaultAmt = Math.min(availableExcess, targetOutstanding);
+      amountInput.value = Calc.formatVND(defaultAmt).replace('₫', '').trim();
+    }
+
+    const transferAmt = Calc.parseFormattedCurrency(amountInput.value) || 0;
+
+    const sourcePaidAfter = Math.max(0, currentResolutionFee.total_paid - transferAmt);
+    const sourceExcessAfter = Math.max(0, sourcePaidAfter - currentResolutionFee.net_due);
+
+    const targetPaidAfter = target.total_paid + transferAmt;
+    const targetOutstandingAfter = Math.max(0, target.net_due - targetPaidAfter);
+
+    setElementText('preview-source-sem', currentResolutionFee.semester_label);
+    setElementText('preview-source-paid', Calc.formatVND(sourcePaidAfter));
+    setElementText('preview-source-excess', Calc.formatVND(sourceExcessAfter));
+
+    setElementText('preview-target-sem', target.semester_label);
+    setElementText('preview-target-paid', Calc.formatVND(targetPaidAfter));
+    setElementText('preview-target-outstanding', Calc.formatVND(targetOutstandingAfter));
+
+    if (previewBox) previewBox.style.display = 'block';
+    if (submitBtn) submitBtn.disabled = (targetOutstanding <= 0 || transferAmt <= 0 || transferAmt > availableExcess || transferAmt > targetOutstanding);
+  }
+
+  async function handleOverpaidSubmit(e) {
+    e.preventDefault();
+    if (!currentResolutionFee) return;
+
+    const isRefund = document.getElementById('radio-res-refund').checked;
+    const isTransfer = document.getElementById('radio-res-transfer').checked;
+    const feeId = currentResolutionFee.fee_record_id;
+
+    const sourceExcess = Math.max(0, currentResolutionFee.total_paid - currentResolutionFee.net_due);
+    const sourcePending = currentResolutionFee.pending_refunds_sum || 0;
+    const availableExcess = Math.max(0, sourceExcess - sourcePending);
+
+    if (isRefund) {
+      const amountInput = document.getElementById('res-refund-amount');
+      const reasonInput = document.getElementById('res-refund-reason');
+      const amt = Calc.parseFormattedCurrency(amountInput.value);
+      const reason = reasonInput.value.trim();
+
+      if (!amt || amt <= 0) {
+        showToast('Vui lòng nhập số tiền hoàn hợp lệ.', true);
+        return;
+      }
+      if (amt > availableExcess) {
+        showToast(`Số tiền hoàn không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`, true);
+        return;
+      }
+      if (!reason) {
+        showToast('Vui lòng nhập lý do hoàn tiền.', true);
+        return;
+      }
+      if (reason.length > 200) {
+        showToast('Lý do hoàn tiền tối đa 200 ký tự.', true);
+        return;
+      }
+
+      const body = {
+        amount: amt,
+        reason: reason,
+        request_id: Api.generateUUID()
+      };
+
+      const btn = document.getElementById('btn-submit-overpaid');
+      try {
+        await Api.post(`/fee-records/${feeId}/refunds`, body, btn);
+        showToast('Đã tạo yêu cầu hoàn tiền thành công.');
+        document.getElementById('modal-overpaid-resolution').close();
+        loadFeesData();
+        loadPaymentsData();
+      } catch (err) {
+        showToast(err.message, true);
+      }
+      return;
+    }
+
+    if (isTransfer) {
+      const targetSelect = document.getElementById('res-target-select');
+      const amountInput = document.getElementById('res-transfer-amount');
+      const reasonInput = document.getElementById('res-transfer-reason');
+
+      const targetId = parseInt(targetSelect.value, 10);
+      const amt = Calc.parseFormattedCurrency(amountInput.value);
+      const reason = reasonInput.value.trim();
+
+      if (!targetId) {
+        showToast('Vui lòng chọn hồ sơ đích tiếp nhận.', true);
+        return;
+      }
+      if (!amt || amt <= 0) {
+        showToast('Vui lòng nhập số tiền chuyển hợp lệ.', true);
+        return;
+      }
+
+      const target = currentResolutionTargets.find(t => String(t.fee_record_id) === String(targetId));
+      if (!target) {
+        showToast('Không tìm thấy thông tin hồ sơ đích.', true);
+        return;
+      }
+
+      if (target.outstanding <= 0) {
+        showToast('Hồ sơ đích không còn số còn nợ.', true);
+        return;
+      }
+
+      if (amt > availableExcess) {
+        showToast(`Số tiền chuyển không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`, true);
+        return;
+      }
+
+      if (amt > target.outstanding) {
+        showToast(`Số tiền chuyển không được vượt quá số còn nợ của hồ sơ đích (${Calc.formatVND(target.outstanding)}).`, true);
+        return;
+      }
+
+      if (!reason) {
+        showToast('Vui lòng nhập lý do chuyển tiền.', true);
+        return;
+      }
+      if (reason.length > 200) {
+        showToast('Lý do chuyển tiền tối đa 200 ký tự.', true);
+        return;
+      }
+
+      const targetLabel = target.semester_label || `Hồ sơ #${targetId}`;
+
+      showConfirm(
+        'Xác nhận chuyển số tiền thừa',
+        `Bạn có chắc chắn muốn chuyển ${Calc.formatVND(amt)} từ hồ sơ [${currentResolutionFee.semester_label}] sang hồ sơ [${targetLabel}] không? Thao tác này sẽ có hiệu lực ngay và không thể hoàn tác trên giao diện.`,
+        async () => {
+          const body = {
+            target_fee_record_id: targetId,
+            amount: amt,
+            reason: reason,
+            request_id: Api.generateUUID()
+          };
+
+          const btn = document.getElementById('btn-submit-overpaid');
+          try {
+            await Api.post(`/fee-records/${feeId}/transfers`, body, btn);
+            showToast('Chuyển tiền thừa sang hồ sơ khác thành công.');
+            document.getElementById('modal-overpaid-resolution').close();
+            loadFeesData();
+            loadPaymentsData();
+          } catch (err) {
+            showToast(err.message, true);
+          }
+        }
+      );
+    }
+  }
+
   /* Đảo mục (Reversal) */
 
   function openReversalModal(tx) {
@@ -1158,8 +1570,19 @@
     tbody.innerHTML = txs.map(tx => {
       const isPayment = (tx.type === 'payment');
       const isRev = (tx.type === 'reversal');
-      const typeLabel = isPayment ? 'Thu học phí' : (isRev ? 'Đảo mục (Hủy)' : tx.type);
-      const typeBadge = isPayment ? 'badge-success' : 'badge-danger';
+      const isTransferOut = (tx.type === 'transfer_out');
+      const isTransferIn = (tx.type === 'transfer_in');
+      const typeLabel = (Calc.TX_TYPE_LABELS && Calc.TX_TYPE_LABELS[tx.type]) || (isPayment ? 'Thu học phí' : (isRev ? 'Đảo mục (Hủy)' : tx.type));
+      let typeBadge = 'badge-secondary';
+      if (isPayment) typeBadge = 'badge-success';
+      else if (isRev) typeBadge = 'badge-danger';
+      else if (isTransferOut) typeBadge = 'badge-warning';
+      else if (isTransferIn) typeBadge = 'badge-info';
+
+      const isNegative = isRev || isTransferOut;
+      const isPositive = isPayment || isTransferIn;
+      const amtColor = isPositive ? 'text-success' : (isNegative ? 'text-danger' : '');
+      const amtSign = isNegative ? '-' : (isTransferIn ? '+' : '');
 
       return `
         <tr>
@@ -1169,7 +1592,7 @@
           <td>${escapeHTML(tx.student_name)}</td>
           <td>${escapeHTML(tx.semester_label)}</td>
           <td><span class="badge ${typeBadge}">${typeLabel}</span></td>
-          <td class="text-right ${isPayment ? 'text-success' : 'text-danger'}"><strong>${isRev ? '-' : ''}${Calc.formatVND(tx.amount)}</strong></td>
+          <td class="text-right ${amtColor}"><strong>${amtSign}${Calc.formatVND(tx.amount)}</strong></td>
           <td>${escapeHTML(tx.method)}</td>
           <td><span class="badge badge-secondary">Hoàn tất</span></td>
           <td><small class="text-muted">${escapeHTML(tx.reason || tx.note || '-')}</small></td>
@@ -1271,8 +1694,19 @@
     tbody.innerHTML = entries.map(tx => {
       const isPayment = (tx.type === 'payment');
       const isRev = (tx.type === 'reversal');
-      const typeLabel = isPayment ? 'Thu học phí' : (isRev ? 'Đảo mục (Hủy)' : tx.type);
-      const typeBadge = isPayment ? 'badge-success' : 'badge-danger';
+      const isTransferOut = (tx.type === 'transfer_out');
+      const isTransferIn = (tx.type === 'transfer_in');
+      const typeLabel = (Calc.TX_TYPE_LABELS && Calc.TX_TYPE_LABELS[tx.type]) || (isPayment ? 'Thu học phí' : (isRev ? 'Đảo mục (Hủy)' : tx.type));
+      let typeBadge = 'badge-secondary';
+      if (isPayment) typeBadge = 'badge-success';
+      else if (isRev) typeBadge = 'badge-danger';
+      else if (isTransferOut) typeBadge = 'badge-warning';
+      else if (isTransferIn) typeBadge = 'badge-info';
+
+      const isNegative = isRev || isTransferOut;
+      const isPositive = isPayment || isTransferIn;
+      const amtColor = isPositive ? 'text-success' : (isNegative ? 'text-danger' : '');
+      const amtSign = isNegative ? '-' : (isTransferIn ? '+' : '');
       const balanceDisplay = tx.remaining_balance !== undefined ? Calc.formatVND(tx.remaining_balance) : '-';
 
       return `
@@ -1283,7 +1717,7 @@
           <td>${escapeHTML(tx.student_name)}</td>
           <td>${escapeHTML(tx.semester_label)}</td>
           <td><span class="badge ${typeBadge}">${typeLabel}</span></td>
-          <td class="text-right ${isPayment ? 'text-success' : 'text-danger'}"><strong>${isRev ? '-' : ''}${Calc.formatVND(tx.amount)}</strong></td>
+          <td class="text-right ${amtColor}"><strong>${amtSign}${Calc.formatVND(tx.amount)}</strong></td>
           <td>${escapeHTML(tx.method)}</td>
           <td class="text-right"><strong>${balanceDisplay}</strong></td>
           <td class="text-center">
@@ -1353,6 +1787,7 @@
     document.getElementById('btn-close-fee-modal')?.addEventListener('click', () => document.getElementById('modal-fee').close());
     document.getElementById('btn-cancel-fee')?.addEventListener('click', () => document.getElementById('modal-fee').close());
     document.getElementById('fee-form')?.addEventListener('submit', handleFeeSubmit);
+    document.getElementById('fee-student-select')?.addEventListener('change', checkDuplicateFeeRecord);
     document.getElementById('fee-semester-select')?.addEventListener('change', updateFeeGrossPreview);
     document.getElementById('fee-credits-input')?.addEventListener('input', updateFeeGrossPreview);
     document.getElementById('fee-filter-semester')?.addEventListener('change', loadFeesData);
@@ -1361,6 +1796,29 @@
       clearTimeout(window._feeSearchTimer);
       window._feeSearchTimer = setTimeout(loadFeesData, 300);
     });
+    document.getElementById('btn-close-fee-duplicate-alert')?.addEventListener('click', () => {
+      const el = document.getElementById('fee-duplicate-top-alert');
+      if (el) el.style.display = 'none';
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const alertEl = document.getElementById('fee-duplicate-top-alert');
+        if (alertEl && alertEl.style.display !== 'none') {
+          alertEl.style.display = 'none';
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
+    }, true);
+
+    // Overpaid resolution events
+    document.getElementById('btn-close-overpaid-modal')?.addEventListener('click', () => document.getElementById('modal-overpaid-resolution').close());
+    document.getElementById('btn-cancel-overpaid')?.addEventListener('click', () => document.getElementById('modal-overpaid-resolution').close());
+    document.getElementById('radio-res-refund')?.addEventListener('change', updateResolutionUI);
+    document.getElementById('radio-res-transfer')?.addEventListener('change', updateResolutionUI);
+    document.getElementById('res-target-select')?.addEventListener('change', () => updateTransferPreview(true));
+    document.getElementById('res-transfer-amount')?.addEventListener('input', () => updateTransferPreview(false));
+    document.getElementById('overpaid-form')?.addEventListener('submit', handleOverpaidSubmit);
 
     // Exemption events
     document.getElementById('btn-close-exemption-modal')?.addEventListener('click', () => document.getElementById('modal-exemption').close());

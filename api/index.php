@@ -98,7 +98,7 @@ if ($path === '/api/rates' || preg_match('#^/api/rates/(\d+)$#', $path, $m)) {
     exit;
 }
 
-if ($path === '/api/fee-records' || preg_match('#^/api/fee-records/(\d+)(/exemption)?$#', $path, $m)) {
+if ($path === '/api/fee-records' || preg_match('#^/api/fee-records/(\d+)(/(exemption|transfers))?$#', $path, $m) || $path === '/api/transfers') {
     handle_fees_routes($method, $path, $m ?? []);
     exit;
 }

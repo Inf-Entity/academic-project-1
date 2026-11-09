@@ -199,6 +199,10 @@ function handle_payments_routes(string $method, string $path, array $matches): v
                 json_error('Không tìm thấy giao dịch sổ cái cần đảo mục.', 'NOT_FOUND', 404);
             }
 
+            if ($target['entry_type'] === 'transfer_out' || $target['entry_type'] === 'transfer_in') {
+                json_error('Không thể đảo bút toán chuyển khoản nội bộ.', 'CANNOT_REVERSE_TRANSFER', 422);
+            }
+
             if ($target['entry_type'] !== 'payment') {
                 json_error('Chỉ giao dịch thanh toán (payment) mới có thể thực hiện đảo mục.', 'INVALID_ENTRY_TYPE', 422);
             }
@@ -213,6 +217,15 @@ function handle_payments_routes(string $method, string $path, array $matches): v
             // Lock fee_record
             $feeRecordId = (int)$target['fee_record_id'];
             $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => $feeRecordId]);
+
+            // Kiểm tra nếu đảo mục làm total_paid bị âm (do tiền đã bị hoàn hoặc chuyển đi)
+            $sum = fetch_fee_record_summary($pdo, $feeRecordId);
+            $currentTotalPaid = (int)($sum['total_paid'] ?? 0);
+            $reversalAmount = (int)$target['amount'];
+
+            if (($currentTotalPaid - $reversalAmount) < 0) {
+                json_error('Không thể đảo bút toán vì số tiền đã được hoàn hoặc chuyển đi.', 'REVERSAL_REJECTED_CONSUMED', 422);
+            }
 
             // Ghi bản ghi đảo mục (Reversals receive no receipt number)
             $today = date('Y-m-d');

@@ -26,6 +26,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
                     v.*,
+                    v.fee_record_id AS id,
                     s.student_code, s.full_name, s.class_name,
                     sem.term_no, sem.academic_year_start,
                     CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label
@@ -117,25 +118,40 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $rateSnapshot = (int)$rateRow['price_per_credit'];
         $gross = calc_gross($credits, $rateSnapshot);
 
-        // Kiểm tra trùng hồ sơ (1 hồ sơ duy nhất trên 1 sinh viên trong 1 học kỳ)
+        // Kiểm tra trùng hồ sơ trước khi INSERT
         $chkDup = $db->prepare("SELECT id FROM fee_records WHERE student_id = :stId AND semester_id = :semId");
         $chkDup->execute(['stId' => $studentId, 'semId' => $semesterId]);
-        if ($chkDup->fetch()) {
-            json_error('Sinh viên này đã có hồ sơ học phí trong học kỳ đã chọn.', 'DUPLICATE_FEE_RECORD', 409);
+        $existingRecord = $chkDup->fetch();
+        if ($existingRecord) {
+            error_log(sprintf("[%s] Duplicate fee record attempt: student_id=%d, semester_id=%d", date('Y-m-d H:i:s'), $studentId, $semesterId));
+            json_error('Sinh viên này đã có hồ sơ học phí cho học kỳ này.', 'DUPLICATE_FEE_RECORD', 409, null, ['existing_id' => (int)$existingRecord['id']]);
         }
 
-        $ins = $db->prepare(
-            "INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at)
-             VALUES (:stId, :semId, :credits, :snapshot, :gross, NOW(), NOW())"
-        );
-        $ins->execute([
-            'stId'     => $studentId,
-            'semId'    => $semesterId,
-            'credits'  => $credits,
-            'snapshot' => $rateSnapshot,
-            'gross'    => $gross
-        ]);
-        $newId = (int)$db->lastInsertId();
+        try {
+            $ins = $db->prepare(
+                "INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition, created_at, updated_at)
+                 VALUES (:stId, :semId, :credits, :snapshot, :gross, NOW(), NOW())"
+            );
+            $ins->execute([
+                'stId'     => $studentId,
+                'semId'    => $semesterId,
+                'credits'  => $credits,
+                'snapshot' => $rateSnapshot,
+                'gross'    => $gross
+            ]);
+            $newId = (int)$db->lastInsertId();
+        } catch (PDOException $pe) {
+            $isDuplicate = ($pe->getCode() === '23000') || (isset($pe->errorInfo[1]) && $pe->errorInfo[1] === 1062);
+            if ($isDuplicate) {
+                error_log(sprintf("[%s] Duplicate fee record race on INSERT: student_id=%d, semester_id=%d", date('Y-m-d H:i:s'), $studentId, $semesterId));
+                $chk = $db->prepare("SELECT id FROM fee_records WHERE student_id = :stId AND semester_id = :semId");
+                $chk->execute(['stId' => $studentId, 'semId' => $semesterId]);
+                $exRow = $chk->fetch();
+                $existingId = $exRow ? (int)$exRow['id'] : null;
+                json_error('Sinh viên này đã có hồ sơ học phí cho học kỳ này.', 'DUPLICATE_FEE_RECORD', 409, null, ['existing_id' => $existingId]);
+            }
+            throw $pe;
+        }
 
         log_audit(null, 'create', 'fee_records', (string)$newId, [
             'student_id'         => $studentId,
@@ -350,5 +366,236 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
             'ledger_entries'  => $ledger,
             'refund_requests' => $refunds
         ]));
+    }
+
+    // 7. POST /api/fee-records/{id}/transfers (Transfer Overpaid Excess)
+    if ((preg_match('#^/api/fee-records/(\d+)/transfers$#', $path, $m) || $path === '/api/transfers') && $method === 'POST') {
+        verify_csrf_token();
+        $sourceId = !empty($m[1]) ? (int)$m[1] : 0;
+        $input = get_json_input();
+        validate_allowed_fields($input, ['source_fee_record_id', 'target_fee_record_id', 'target_id', 'amount', 'reason', 'request_id']);
+
+        if ($sourceId <= 0 && !empty($input['source_fee_record_id'])) {
+            $sourceId = (int)$input['source_fee_record_id'];
+        }
+        $targetId = !empty($input['target_fee_record_id']) ? (int)$input['target_fee_record_id'] : (!empty($input['target_id']) ? (int)$input['target_id'] : 0);
+
+        $requestId = trim((string)($input['request_id'] ?? ''));
+        if ($requestId === '' || !preg_match('/^[a-f0-9\-]{36}$/i', $requestId)) {
+            json_error('Mã yêu cầu (request_id) không hợp lệ (yêu cầu chuẩn UUID).', 'INVALID_REQUEST_ID', 400);
+        }
+
+        $amount = parse_currency($input['amount'] ?? null);
+        $reason = trim((string)($input['reason'] ?? ''));
+
+        $errors = [];
+        if ($sourceId <= 0) {
+            $errors['source_fee_record_id'] = 'Vui lòng xác định hồ sơ nguồn.';
+        }
+        if ($targetId <= 0) {
+            $errors['target_fee_record_id'] = 'Vui lòng chọn hồ sơ đích.';
+        }
+        if ($amount === null || $amount <= 0) {
+            $errors['amount'] = 'Số tiền chuyển phải là số nguyên dương hợp lệ.';
+        }
+        if ($reason === '' || !validate_string_length($reason, 1, 200)) {
+            $errors['reason'] = 'Lý do chuyển tiền là bắt buộc và tối đa 200 ký tự.';
+        }
+        if (!empty($errors)) {
+            json_error('Dữ liệu chuyển tiền không hợp lệ.', 'VALIDATION_ERROR', 400, $errors);
+        }
+
+        if ($sourceId === $targetId) {
+            json_error('Không thể chuyển tiền cho chính hồ sơ này.', 'INVALID_TARGET_SELF', 422);
+        }
+
+        // Idempotency check: if transfer with this request_id already exists, return existing rows
+        $reqOut = $requestId . '-out';
+        $reqIn = $requestId . '-in';
+        $chkReq = $db->prepare("SELECT * FROM ledger_entries WHERE request_id = :reqOut");
+        $chkReq->execute(['reqOut' => $reqOut]);
+        $existingOut = $chkReq->fetch();
+        if ($existingOut) {
+            $grpId = $existingOut['transfer_group_id'];
+            $chkGroup = $db->prepare("SELECT * FROM ledger_entries WHERE transfer_group_id = :grpId ORDER BY id ASC");
+            $chkGroup->execute(['grpId' => $grpId]);
+            $entries = $chkGroup->fetchAll();
+            $sourceSummary = fetch_fee_record_summary($db, $sourceId);
+            $targetSummary = fetch_fee_record_summary($db, $targetId);
+            json_success([
+                'transfer_group_id' => $grpId,
+                'entries'           => $entries,
+                'source_profile'    => $sourceSummary,
+                'target_profile'    => $targetSummary
+            ], 200);
+        }
+
+        $userId = (int)($_SESSION['user_id'] ?? 1);
+
+        $result = db_transaction(function(PDO $pdo) use ($sourceId, $targetId, $amount, $reason, $requestId, $reqOut, $reqIn, $userId) {
+            // Lock both fee_record rows with SELECT ... FOR UPDATE in ascending id order to prevent deadlock
+            $firstId = min($sourceId, $targetId);
+            $secondId = max($sourceId, $targetId);
+
+            $lock1 = $pdo->prepare("SELECT id, student_id FROM fee_records WHERE id = :id FOR UPDATE");
+            $lock1->execute(['id' => $firstId]);
+            $row1 = $lock1->fetch();
+
+            $lock2 = $pdo->prepare("SELECT id, student_id FROM fee_records WHERE id = :id FOR UPDATE");
+            $lock2->execute(['id' => $secondId]);
+            $row2 = $lock2->fetch();
+
+            if (!$row1 || !$row2) {
+                json_error('Không tìm thấy hồ sơ học phí nguồn hoặc đích.', 'NOT_FOUND', 404);
+            }
+
+            $sourceStudentId = ($row1['id'] == $sourceId) ? (int)$row1['student_id'] : (int)$row2['student_id'];
+            $targetStudentId = ($row1['id'] == $targetId) ? (int)$row1['student_id'] : (int)$row2['student_id'];
+
+            // Source and target must belong to the same student
+            if ($sourceStudentId !== $targetStudentId) {
+                json_error('Hai hồ sơ học phí phải thuộc về cùng một sinh viên.', 'DIFFERENT_STUDENTS', 422);
+            }
+
+            // Recheck both balances after locking
+            $sourceSummary = fetch_fee_record_summary($pdo, $sourceId);
+            $targetSummary = fetch_fee_record_summary($pdo, $targetId);
+
+            $sourceNet = (int)($sourceSummary['net_due'] ?? 0);
+            $sourcePaid = (int)($sourceSummary['total_paid'] ?? 0);
+            $sourcePending = (int)($sourceSummary['pending_refunds_sum'] ?? 0);
+            $sourceExcess = max(0, $sourcePaid - $sourceNet);
+            $sourceAvailable = max(0, $sourceExcess - $sourcePending);
+
+            $targetNet = (int)($targetSummary['net_due'] ?? 0);
+            $targetPaid = (int)($targetSummary['total_paid'] ?? 0);
+            $targetOutstanding = max(0, $targetNet - $targetPaid);
+
+            // Target must have outstanding balance > 0 (net_due − total_paid > 0)
+            if ($targetOutstanding <= 0) {
+                json_error('Hồ sơ đích không còn số còn nợ.', 'TARGET_NO_OUTSTANDING', 422);
+            }
+
+            // Amount ≤ available excess of source, and amount ≤ outstanding balance of target
+            if ($amount > $sourceAvailable) {
+                json_error('Số tiền chuyển vượt quá số tiền nộp thừa khả dụng của hồ sơ nguồn (Khả dụng: ' . number_format($sourceAvailable, 0, ',', '.') . ' ₫).', 'EXCESS_EXCEEDED', 422);
+            }
+
+            if ($amount > $targetOutstanding) {
+                json_error('Số tiền chuyển vượt quá số còn nợ của hồ sơ đích (Còn nợ: ' . number_format($targetOutstanding, 0, ',', '.') . ' ₫).', 'TARGET_OUTSTANDING_EXCEEDED', 422);
+            }
+
+            // Transfer is a single transaction
+            // Generate transfer_group_id
+            $transferGroupId = generate_uuid();
+            $today = date('Y-m-d');
+
+            // Write two ledger rows sharing one transfer_group_id:
+            // transfer_out on source, transfer_in on target.
+            // Neither has a receipt number. Both carry request_id with distinct suffixes (-out and -in).
+            $insOut = $pdo->prepare(
+                "INSERT INTO ledger_entries (
+                    fee_record_id, entry_type, amount, method, entry_date,
+                    receipt_no, reverses_entry_id, transfer_group_id, reason, note, request_id, created_by, created_at
+                ) VALUES (
+                    :frId, 'transfer_out', :amount, 'Chuyển khoản', :entryDate,
+                    NULL, NULL, :grpId, :reason, :note, :reqId, :userId, NOW()
+                )"
+            );
+
+            $insIn = $pdo->prepare(
+                "INSERT INTO ledger_entries (
+                    fee_record_id, entry_type, amount, method, entry_date,
+                    receipt_no, reverses_entry_id, transfer_group_id, reason, note, request_id, created_by, created_at
+                ) VALUES (
+                    :frId, 'transfer_in', :amount, 'Chuyển khoản', :entryDate,
+                    NULL, NULL, :grpId, :reason, :note, :reqId, :userId, NOW()
+                )"
+            );
+
+            try {
+                $insOut->execute([
+                    'frId'      => $sourceId,
+                    'amount'    => $amount,
+                    'entryDate' => $today,
+                    'grpId'     => $transferGroupId,
+                    'reason'    => $reason,
+                    'note'      => 'Chuyển tiền thừa sang hồ sơ #' . $targetId,
+                    'reqId'     => $reqOut,
+                    'userId'    => $userId
+                ]);
+                $outId = (int)$pdo->lastInsertId();
+
+                $insIn->execute([
+                    'frId'      => $targetId,
+                    'amount'    => $amount,
+                    'entryDate' => $today,
+                    'grpId'     => $transferGroupId,
+                    'reason'    => $reason,
+                    'note'      => 'Nhận tiền thừa từ hồ sơ #' . $sourceId,
+                    'reqId'     => $reqIn,
+                    'userId'    => $userId
+                ]);
+                $inId = (int)$pdo->lastInsertId();
+            } catch (PDOException $pe) {
+                // Check if race condition idempotency
+                if ($pe->getCode() === '23000') {
+                    $chk = $pdo->prepare("SELECT * FROM ledger_entries WHERE request_id = :reqOut");
+                    $chk->execute(['reqOut' => $reqOut]);
+                    $ex = $chk->fetch();
+                    if ($ex) {
+                        return [
+                            'transfer_group_id' => $ex['transfer_group_id'],
+                            'is_idempotent'     => true
+                        ];
+                    }
+                }
+                throw $pe;
+            }
+
+            // Audit both rows and the action
+            log_audit($userId, 'transfer_out', 'ledger_entries', (string)$outId, [
+                'fee_record_id'     => $sourceId,
+                'target_id'         => $targetId,
+                'amount'            => $amount,
+                'transfer_group_id' => $transferGroupId,
+                'request_id'        => $reqOut
+            ], $pdo);
+
+            log_audit($userId, 'transfer_in', 'ledger_entries', (string)$inId, [
+                'fee_record_id'     => $targetId,
+                'source_id'         => $sourceId,
+                'amount'            => $amount,
+                'transfer_group_id' => $transferGroupId,
+                'request_id'        => $reqIn
+            ], $pdo);
+
+            log_audit($userId, 'transfer_excess', 'fee_records', (string)$sourceId, [
+                'source_id'         => $sourceId,
+                'target_id'         => $targetId,
+                'amount'            => $amount,
+                'reason'            => $reason,
+                'transfer_group_id' => $transferGroupId
+            ], $pdo);
+
+            return [
+                'transfer_group_id' => $transferGroupId,
+                'transfer_out_id'   => $outId,
+                'transfer_in_id'    => $inId,
+                'amount'            => $amount,
+                'source_fee_record_id' => $sourceId,
+                'target_fee_record_id' => $targetId
+            ];
+        }, $db);
+
+        // Fetch updated summaries
+        $updatedSource = fetch_fee_record_summary($db, $sourceId);
+        $updatedTarget = fetch_fee_record_summary($db, $targetId);
+
+        $httpStatus = !empty($result['is_idempotent']) ? 200 : 201;
+        json_success(array_merge($result, [
+            'source_profile' => $updatedSource,
+            'target_profile' => $updatedTarget
+        ]), $httpStatus);
     }
 }

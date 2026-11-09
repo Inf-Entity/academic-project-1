@@ -35,6 +35,7 @@ function handle_history_routes(string $method, string $path): void {
                     l.entry_date,
                     l.receipt_no,
                     l.reverses_entry_id,
+                    l.transfer_group_id,
                     l.reason,
                     l.note,
                     l.request_id,
@@ -108,6 +109,8 @@ function handle_history_routes(string $method, string $path): void {
                 $sql .= " AND l.entry_type = 'payment'";
             } elseif (in_array($sLower, ['reversal', 'đảo mục', 'hủy'], true)) {
                 $sql .= " AND l.entry_type = 'reversal'";
+            } elseif (in_array($sLower, ['transfer', 'chuyển khoản', 'chuyển khoản nội bộ'], true)) {
+                $sql .= " AND l.entry_type IN ('transfer_out', 'transfer_in')";
             } elseif (in_array($sLower, ['unpaid', 'chưa thanh toán'], true)) {
                 $sql .= " AND v.total_paid <= 0 AND v.net_due > 0";
             } elseif (in_array($sLower, ['partially paid', 'thanh toán một phần', 'partial'], true)) {

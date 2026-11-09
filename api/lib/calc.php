@@ -178,7 +178,9 @@ function get_fee_summary_subquery(): string {
             COALESCE(r.reversals_sum, 0) AS reversals_sum,
             COALESCE(rf_comp.completed_refunds_sum, 0) AS completed_refunds_sum,
             COALESCE(rf_pend.pending_refunds_sum, 0) AS pending_refunds_sum,
-            (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0)) AS total_paid
+            COALESCE(tout.transfer_out_sum, 0) AS transfer_out_sum,
+            COALESCE(tin.transfer_in_sum, 0) AS transfer_in_sum,
+            (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0) - COALESCE(tout.transfer_out_sum, 0) + COALESCE(tin.transfer_in_sum, 0)) AS total_paid
         FROM fee_records fr
         LEFT JOIN exemptions ex ON fr.id = ex.fee_record_id
         LEFT JOIN (
@@ -205,6 +207,18 @@ function get_fee_summary_subquery(): string {
             WHERE status = 'pending'
             GROUP BY fee_record_id
         ) rf_pend ON fr.id = rf_pend.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS transfer_out_sum
+            FROM ledger_entries
+            WHERE entry_type = 'transfer_out'
+            GROUP BY fee_record_id
+        ) tout ON fr.id = tout.fee_record_id
+        LEFT JOIN (
+            SELECT fee_record_id, SUM(amount) AS transfer_in_sum
+            FROM ledger_entries
+            WHERE entry_type = 'transfer_in'
+            GROUP BY fee_record_id
+        ) tin ON fr.id = tin.fee_record_id
     )";
 }
 

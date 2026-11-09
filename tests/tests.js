@@ -146,6 +146,22 @@
   assert(balRev.totalPaid === 0 && balRev.outstandingBalance === 4000000, 'Đảo mục thanh toán khôi phục số dư còn nợ về mức ban đầu', 4000000, balRev.outstandingBalance);
 
   // --------------------------------------------------------------------------
+  // TEST CASE 8b: BÚT TOÁN CHUYỂN KHOẢN TIỀN THỪA (TRANSFER OUT & TRANSFER IN)
+  // --------------------------------------------------------------------------
+  const mockFeeSource = { id: 'FR-SRC', netDue: 7500000, grossTuition: 8200000 };
+  const mockFeeTarget = { id: 'FR-TGT', netDue: 10200000, grossTuition: 10200000 };
+  const mockTransferTxs = [
+    { feeRecordId: 'FR-SRC', type: C.TX_TYPES.PAYMENT, amount: 8200000 },
+    { feeRecordId: 'FR-SRC', type: C.TX_TYPES.TRANSFER_OUT, amount: 700000 },
+    { feeRecordId: 'FR-TGT', type: C.TX_TYPES.TRANSFER_IN, amount: 700000 }
+  ];
+  const balSource = C.calculateFeeBalances(mockFeeSource, mockTransferTxs);
+  assert(balSource.totalPaid === 7500000 && balSource.overpaidAmount === 0, 'Chuyển tiền thừa ra (transfer_out) làm giảm số đã nộp hồ sơ nguồn về đúng 7.500.000 (hết nộp thừa)', 7500000, balSource.totalPaid);
+
+  const balTarget = C.calculateFeeBalances(mockFeeTarget, mockTransferTxs);
+  assert(balTarget.totalPaid === 700000 && balTarget.outstandingBalance === 9500000, 'Nhận tiền thừa (transfer_in) làm tăng số đã nộp hồ sơ đích lên 700.000 và giảm nợ xuống 9.500.000', 9500000, balTarget.outstandingBalance);
+
+  // --------------------------------------------------------------------------
   // TEST CASE 9: CHUẨN HÓA TIẾNG VIỆT & TÌM KIẾM KHÔNG DẤU (DIACRITIC-INSENSITIVE)
   // --------------------------------------------------------------------------
   const searchKey = C.normalizeVietnamese('nguyen');

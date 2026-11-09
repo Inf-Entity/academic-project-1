@@ -18,16 +18,22 @@
   const TX_TYPES = {
     PAYMENT: 'payment',
     REFUND: 'refund',
-    REVERSAL: 'reversal'
+    REVERSAL: 'reversal',
+    TRANSFER_OUT: 'transfer_out',
+    TRANSFER_IN: 'transfer_in'
   };
 
   const TX_TYPE_LABELS = {
     payment: 'Thu học phí',
     refund: 'Hoàn tiền',
     reversal: 'Đảo mục (Hủy)',
+    transfer_out: 'Chuyển đi',
+    transfer_in: 'Chuyển đến',
     PAYMENT: 'Thu học phí',
     REFUND: 'Hoàn tiền',
-    REVERSAL: 'Đảo mục (Hủy)'
+    REVERSAL: 'Đảo mục (Hủy)',
+    TRANSFER_OUT: 'Chuyển đi',
+    TRANSFER_IN: 'Chuyển đến'
   };
 
   const REFUND_STATUS = {
@@ -97,6 +103,8 @@
     let completedRefundSum = 0;
     let refundReversals = 0;
     let pendingRefundSum = 0;
+    let transferOutSum = 0;
+    let transferInSum = 0;
 
     txs.forEach(tx => {
       const amt = Math.max(0, Math.round(tx.amount || 0));
@@ -106,6 +114,10 @@
 
       if (type === 'payment') {
         paymentSum += amt;
+      } else if (type === 'transfer_out') {
+        transferOutSum += amt;
+      } else if (type === 'transfer_in') {
+        transferInSum += amt;
       } else if (type === 'refund') {
         if (status === 'completed' || status === 'đã hoàn tiền') {
           completedRefundSum += amt;
@@ -121,7 +133,7 @@
       }
     });
 
-    const effectivePaid = Math.max(0, (paymentSum - paymentReversals) - (completedRefundSum - refundReversals));
+    const effectivePaid = Math.max(0, (paymentSum - paymentReversals) - (completedRefundSum - refundReversals) - transferOutSum + transferInSum);
     const netDue = Math.max(0, Math.round(feeRecord.netDue !== undefined ? feeRecord.netDue : (feeRecord.net_due || 0)));
 
     const outstandingBalance = Math.max(0, netDue - effectivePaid);

@@ -134,12 +134,15 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
             $feeRecordId = (int)$refund['fee_record_id'];
             $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => $feeRecordId]);
 
-            // Re-check total_paid to ensure refund does not make total_paid negative
+            // Re-check total_paid and excess inside transaction
             $sum = fetch_fee_record_summary($pdo, $feeRecordId);
             $currentTotalPaid = (int)($sum['total_paid'] ?? 0);
+            $netDue = (int)($sum['net_due'] ?? 0);
+            $refundAmount = (int)$refund['amount'];
+            $currentExcess = max(0, $currentTotalPaid - $netDue);
 
-            if (($currentTotalPaid - (int)$refund['amount']) < 0) {
-                json_error('Không thể hoàn tất hoàn tiền vì số dư đã nộp không đủ.', 'NEGATIVE_TOTAL_PAID', 422);
+            if (($currentTotalPaid - $refundAmount) < 0 || $currentExcess < $refundAmount) {
+                json_error('Không thể hoàn tất hoàn tiền vì số tiền nộp thừa không còn đủ.', 'EXCESS_INSUFFICIENT', 422);
             }
 
             $upStmt = $pdo->prepare(
