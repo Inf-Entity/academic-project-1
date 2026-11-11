@@ -160,4 +160,11 @@ CREATE TABLE `audit_log` (
     CONSTRAINT `fk_audit_log_users` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 11. Triggers chuẩn hóa mã sinh viên tự động thành chữ in hoa (Uppercase Normalization)
+DROP TRIGGER IF EXISTS `trg_students_before_insert`;
+CREATE TRIGGER `trg_students_before_insert` BEFORE INSERT ON `students` FOR EACH ROW SET NEW.student_code = UPPER(TRIM(NEW.student_code));
+
+DROP TRIGGER IF EXISTS `trg_students_before_update`;
+CREATE TRIGGER `trg_students_before_update` BEFORE UPDATE ON `students` FOR EACH ROW SET NEW.student_code = UPPER(TRIM(NEW.student_code));
+
 SET FOREIGN_KEY_CHECKS = 1;

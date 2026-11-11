@@ -204,9 +204,9 @@ $frCount = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
 $exCount = (int)$pdo->query("SELECT COUNT(*) FROM exemptions")->fetchColumn();
 $leCount = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
 $rfCount = (int)$pdo->query("SELECT COUNT(*) FROM refund_requests")->fetchColumn();
-it("Seed data nạp đủ số dòng chuẩn: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền", 
-    $stCount === 7 && $frCount === 12 && $exCount === 7 && $leCount === 11 && $rfCount === 3,
-    ['students' => 7, 'fee_records' => 12, 'exemptions' => 7, 'ledger_entries' => 11, 'refund_requests' => 3],
+it("Seed data nạp đủ số dòng chuẩn: 13 sinh viên, 13 hồ sơ học phí, 8 miễn giảm, 13 giao dịch sổ cái, 4 yêu cầu hoàn tiền", 
+    $stCount === 13 && $frCount === 13 && $exCount === 8 && $leCount === 13 && $rfCount === 4,
+    ['students' => 13, 'fee_records' => 13, 'exemptions' => 8, 'ledger_entries' => 13, 'refund_requests' => 4],
     ['students' => $stCount, 'fee_records' => $frCount, 'exemptions' => $exCount, 'ledger_entries' => $leCount, 'refund_requests' => $rfCount]
 );
 
@@ -1350,6 +1350,424 @@ $pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id IN ({$feeRecordA}, {$
 $pdo->exec("DELETE FROM refund_requests WHERE fee_record_id IN ({$feeRecordA}, {$feeRecordB}, {$feeRecordC})");
 $pdo->exec("DELETE FROM fee_records WHERE id IN ({$feeRecordA}, {$feeRecordB}, {$feeRecordC})");
 $pdo->exec("DELETE FROM students WHERE id = {$testStudentId}");
+
+// ----------------------------------------------------------------------------
+// 18. KIỂM THỬ XÁC THỰC DỮ LIỆU ĐẦU VÀO & BẢN ĐỒ LỖI (PART 1: VALIDATION & FIELD MAP)
+// ----------------------------------------------------------------------------
+suite_header("18. Kiểm thử xác thực dữ liệu đầu vào & bản đồ lỗi (Part 1: Validation & Field Map)");
+
+// 18.1 Amounts
+$validAmounts = ['1.500.000', '1,500,000', '1 500 000', '1500000 đ', '₫1.500.000'];
+$allValidAmountsParsed = true;
+foreach ($validAmounts as $va) {
+    if (parse_currency($va) !== 1500000) {
+        $allValidAmountsParsed = false;
+        break;
+    }
+}
+it("Các định dạng số tiền hợp lệ ('1.500.000', '1,500,000', '1 500 000', '1500000 đ', '₫1.500.000') đều chuẩn hóa thành 1.500.000", $allValidAmountsParsed);
+
+$invalidAmounts = ['1,5abc', '-100', '0', '1.5', '1e6', '٣٠٠', '1000000000000', ''];
+$allInvalidAmountsRejected = true;
+foreach ($invalidAmounts as $ia) {
+    if (parse_currency($ia) !== null) {
+        $allInvalidAmountsRejected = false;
+        break;
+    }
+}
+it("parse_currency từ chối các giá trị sai: '1,5abc', '-100', '0', '1.5', '1e6', '٣٠٠', > 999 tỷ và rỗng", $allInvalidAmountsRejected);
+
+$badAmtRes = $api->request('POST', "/fee-records/12/payments", [
+    'amount'     => '1,5abc',
+    'method'     => 'Chuyển khoản',
+    'entry_date' => date('Y-m-d'),
+    'request_id' => generate_uuid()
+]);
+it("API nộp tiền với số tiền sai định dạng trả về HTTP 400 và có error.fields.amount", 
+    $badAmtRes['status'] === 400 && !empty($badAmtRes['body']['error']['fields']['amount'])
+);
+
+// 18.2 Student Code validation
+$badCodeShort = $api->request('POST', "/students", [
+    'student_code' => 'SV01',
+    'full_name'    => 'Nguyễn Văn Test'
+]);
+it("API thêm sinh viên từ chối mã < 6 ký tự ('SV01') với HTTP 400 và error.fields.student_code", 
+    $badCodeShort['status'] === 400 && !empty($badCodeShort['body']['error']['fields']['student_code'])
+);
+
+$badCodeLong = $api->request('POST', "/students", [
+    'student_code' => 'SV1234567890123',
+    'full_name'    => 'Nguyễn Văn Test'
+]);
+it("API thêm sinh viên từ chối mã > 12 ký tự với HTTP 400 và error.fields.student_code", 
+    $badCodeLong['status'] === 400 && !empty($badCodeLong['body']['error']['fields']['student_code'])
+);
+
+$badCodeSpace = $api->request('POST', "/students", [
+    'student_code' => 'SV 001',
+    'full_name'    => 'Nguyễn Văn Test'
+]);
+it("API thêm sinh viên từ chối mã chứa khoảng trắng ('SV 001') với HTTP 400 và error.fields.student_code", 
+    $badCodeSpace['status'] === 400 && !empty($badCodeSpace['body']['error']['fields']['student_code'])
+);
+
+$badCodePunct = $api->request('POST', "/students", [
+    'student_code' => 'SV-001',
+    'full_name'    => 'Nguyễn Văn Test'
+]);
+it("API thêm sinh viên từ chối mã chứa ký tự đặc biệt ('SV-001') với HTTP 400 và error.fields.student_code", 
+    $badCodePunct['status'] === 400 && !empty($badCodePunct['body']['error']['fields']['student_code'])
+);
+
+$api->request('POST', "/students", [
+    'student_code' => 'SV202699',
+    'full_name'    => 'Nguyễn Văn Đã Có'
+]);
+$dupCodeRes = $api->request('POST', "/students", [
+    'student_code' => 'SV202699',
+    'full_name'    => 'Nguyễn Văn Trùng Mã'
+]);
+$pdo->exec("DELETE FROM students WHERE student_code = 'SV202699'");
+it("API thêm sinh viên từ chối mã đã tồn tại với HTTP 400 và thông báo 'Mã sinh viên đã tồn tại.'", 
+    $dupCodeRes['status'] === 400 && ($dupCodeRes['body']['error']['fields']['student_code'] ?? '') === 'Mã sinh viên đã tồn tại.'
+);
+
+// 18.3 Full Name validation
+$badNameCtrl = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST01',
+    'full_name'    => "Nguyễn Văn\tTest"
+]);
+it("API thêm sinh viên từ chối tên chứa ký tự điều khiển (control chars) với HTTP 400", 
+    $badNameCtrl['status'] === 400 && !empty($badNameCtrl['body']['error']['fields']['full_name'])
+);
+
+$badNameDigits = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST02',
+    'full_name'    => "12345678"
+]);
+it("API thêm sinh viên từ chối tên chỉ gồm chữ số với HTTP 400 và error.fields.full_name", 
+    $badNameDigits['status'] === 400 && !empty($badNameDigits['body']['error']['fields']['full_name'])
+);
+
+$badNameSymbols = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST03',
+    'full_name'    => "!@#$%^&*()"
+]);
+it("API thêm sinh viên từ chối tên chỉ gồm ký tự đặc biệt với HTTP 400 và error.fields.full_name", 
+    $badNameSymbols['status'] === 400 && !empty($badNameSymbols['body']['error']['fields']['full_name'])
+);
+
+// Combining diacritics NFC normalized
+$combiningNameNFD = "Nguye" . "\xCC\x83" . "n Va" . "\xCC\x86" . "n Test";
+$addCombiningRes = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST04',
+    'full_name'    => $combiningNameNFD
+]);
+$savedCombName = (string)$pdo->query("SELECT full_name FROM students WHERE student_code = 'SVTEST04'")->fetchColumn();
+it("API chấp nhận tên chứa dấu tổ hợp (combining diacritics) và NFC-normalize khi lưu", 
+    $addCombiningRes['status'] === 201 && $savedCombName === normalize_nfc($combiningNameNFD)
+);
+$pdo->exec("DELETE FROM students WHERE student_code = 'SVTEST04'");
+
+// 18.4 Class validation
+$longClassRes = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST05',
+    'full_name'    => 'Nguyễn Văn Test',
+    'class_name'   => str_repeat('A', 51)
+]);
+it("API từ chối tên lớp dài hơn 50 ký tự với HTTP 400 và error.fields.class_name", 
+    $longClassRes['status'] === 400 && !empty($longClassRes['body']['error']['fields']['class_name'])
+);
+
+$emptyClassRes = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST06',
+    'full_name'    => 'Nguyễn Văn Test',
+    'class_name'   => '   '
+]);
+$savedEmptyClass = $pdo->query("SELECT class_name FROM students WHERE student_code = 'SVTEST06'")->fetchColumn();
+it("API lưu lớp rỗng hoặc chỉ có khoảng trắng thành NULL", 
+    $emptyClassRes['status'] === 201 && $savedEmptyClass === null
+);
+$pdo->exec("DELETE FROM students WHERE student_code = 'SVTEST06'");
+
+// 18.5 Date validation
+$invalidCalDateRes = $api->request('POST', "/fee-records/12/payments", [
+    'amount'     => 100000,
+    'method'     => 'Chuyển khoản',
+    'entry_date' => '2026-02-31',
+    'request_id' => generate_uuid()
+]);
+it("API từ chối ngày thanh toán không tồn tại trên lịch (31/02/2026) với HTTP 400", 
+    $invalidCalDateRes['status'] === 400 && !empty($invalidCalDateRes['body']['error']['fields']['entry_date'])
+);
+
+$futureDateRes = $api->request('POST', "/fee-records/12/payments", [
+    'amount'     => 100000,
+    'method'     => 'Chuyển khoản',
+    'entry_date' => date('Y-m-d', strtotime('+10 days')),
+    'request_id' => generate_uuid()
+]);
+it("API từ chối ngày thanh toán trong tương lai với HTTP 400", 
+    $futureDateRes['status'] === 400 && !empty($futureDateRes['body']['error']['fields']['entry_date'])
+);
+
+$ddmmyyyyRes = $api->request('POST', "/fee-records/12/payments", [
+    'amount'     => 100000,
+    'method'     => 'Chuyển khoản',
+    'entry_date' => '01/09/2026',
+    'request_id' => generate_uuid()
+]);
+$savedDdMmYyyyDate = (string)$pdo->query("SELECT entry_date FROM ledger_entries WHERE fee_record_id = 12 AND amount = 100000 ORDER BY id DESC LIMIT 1")->fetchColumn();
+it("API nộp tiền chấp nhận định dạng ngày dd/mm/yyyy và lưu thành định dạng ISO YYYY-MM-DD", 
+    $ddmmyyyyRes['status'] === 201 && $savedDdMmYyyyDate === '2026-09-01'
+);
+$pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = 12 AND amount = 100000");
+
+$badDateRangeRes = $api->request('GET', "/history?from=2026-09-30&to=2026-09-01");
+it("API tra cứu lịch sử từ chối khoảng ngày có 'to' nhỏ hơn 'from' với HTTP 400", 
+    $badDateRangeRes['status'] === 400 && !empty($badDateRangeRes['body']['error']['fields']['to'])
+);
+
+// 18.6 Exemption validation
+$badExemptZeroRes = $api->request('PUT', "/fee-records/2/exemption", [
+    'type'   => 'percent',
+    'value'  => 0,
+    'reason' => 'Test 0%'
+]);
+it("API miễn giảm từ chối phần trăm = 0 với HTTP 400", 
+    $badExemptZeroRes['status'] === 400 && !empty($badExemptZeroRes['body']['error']['fields']['value'])
+);
+
+$badExempt101Res = $api->request('PUT', "/fee-records/2/exemption", [
+    'type'   => 'percent',
+    'value'  => 101,
+    'reason' => 'Test 101%'
+]);
+it("API miễn giảm từ chối phần trăm = 101 với HTTP 400", 
+    $badExempt101Res['status'] === 400 && !empty($badExempt101Res['body']['error']['fields']['value'])
+);
+
+$badExemptStrRes = $api->request('PUT', "/fee-records/2/exemption", [
+    'type'   => 'percent',
+    'value'  => '50%',
+    'reason' => 'Test 50%'
+]);
+it("API miễn giảm từ chối chuỗi '50%' với HTTP 400", 
+    $badExemptStrRes['status'] === 400 && !empty($badExemptStrRes['body']['error']['fields']['value'])
+);
+
+$badExemptFixedOverRes = $api->request('PUT', "/fee-records/2/exemption", [
+    'type'   => 'fixed',
+    'value'  => 999999999,
+    'reason' => 'Test vượt'
+]);
+$exOverMsg = $badExemptFixedOverRes['body']['error']['fields']['value'] ?? '';
+it("API miễn giảm cố định vượt học phí gốc bị từ chối với HTTP 400 và thông báo có chứa học phí gốc", 
+    $badExemptFixedOverRes['status'] === 400 && str_contains($exOverMsg, '15.300.000')
+);
+
+// 18.7 Semester term validation
+$badTermRes = $api->request('POST', "/semesters", [
+    'academic_year_start' => 2027,
+    'term_no'             => 4
+]);
+it("API thêm học kỳ từ chối term_no = 4 với HTTP 400", 
+    $badTermRes['status'] === 400 && !empty($badTermRes['body']['error']['fields']['term_no'])
+);
+
+$dupSemRes = $api->request('POST', "/semesters", [
+    'academic_year_start' => 2026,
+    'term_no'             => 1
+]);
+it("API thêm học kỳ từ chối học kỳ trùng lặp với HTTP 400", 
+    $dupSemRes['status'] === 400 && !empty($dupSemRes['body']['error']['fields']['term_no'])
+);
+
+// 18.8 Rate validation
+$badRatePriceRes = $api->request('POST', "/rates", [
+    'semester_id'      => 1,
+    'price_per_credit' => 0
+]);
+it("API định mức từ chối đơn giá = 0 với HTTP 400", 
+    $badRatePriceRes['status'] === 400 && !empty($badRatePriceRes['body']['error']['fields']['price_per_credit'])
+);
+
+$dupRateRes = $api->request('POST', "/rates", [
+    'semester_id'      => 1,
+    'price_per_credit' => 850000
+]);
+it("API định mức từ chối học kỳ đã có định mức với HTTP 400", 
+    $dupRateRes['status'] === 400 && !empty($dupRateRes['body']['error']['fields']['semester_id'])
+);
+
+// 18.9 Login validation
+$badLoginEmpty = (new ApiTestClient())->request('POST', "/login", [
+    'username' => '',
+    'password' => ''
+]);
+it("API đăng nhập từ chối tài khoản hoặc mật khẩu rỗng với HTTP 400", 
+    $badLoginEmpty['status'] === 400 && !empty($badLoginEmpty['body']['error']['fields']['username'])
+);
+
+$badLoginLongUser = (new ApiTestClient())->request('POST', "/login", [
+    'username' => str_repeat('u', 51),
+    'password' => 'Pass@123'
+]);
+it("API đăng nhập từ chối tên đăng nhập dài hơn 50 ký tự với HTTP 400", 
+    $badLoginLongUser['status'] === 400 && !empty($badLoginLongUser['body']['error']['fields']['username'])
+);
+
+$passSpacesClient = new ApiTestClient();
+$passWithSpacesRes = $passSpacesClient->login('admin', ' Admin@123 ');
+it("Mật khẩu có khoảng trắng đầu/cuối được bảo toàn nguyên vẹn (không bị trim), sai mật khẩu bị từ chối", 
+    $passWithSpacesRes['status'] === 401
+);
+
+// 18.10 Search validation
+$longSearchRes = $api->request('GET', "/students?q=" . str_repeat('a', 101));
+it("API tìm kiếm từ chối từ khóa dài hơn 100 ký tự với HTTP 400", 
+    $longSearchRes['status'] === 400 && !empty($longSearchRes['body']['error']['fields']['q'])
+);
+
+$diacriticsOnlySearchRes = $api->request('GET', "/students?q=" . urlencode("   ̀ ́ ̃ ̉ ̣   "));
+it("API tìm kiếm xử lý từ khóa chỉ chứa dấu thanh hoặc khoảng trắng tương đương rỗng, trả về danh sách đầy đủ", 
+    $diacriticsOnlySearchRes['status'] === 200 && count($diacriticsOnlySearchRes['body']['data'] ?? []) === 13
+);
+
+$longFeeSearchRes = $api->request('GET', "/fee-records?student=" . str_repeat('a', 101));
+it("API lọc hồ sơ từ chối từ khóa sinh viên dài hơn 100 ký tự với HTTP 400 và error.fields.student", 
+    $longFeeSearchRes['status'] === 400 && !empty($longFeeSearchRes['body']['error']['fields']['student'])
+);
+
+$invalidFeeSemRes = $api->request('GET', "/fee-records?semester=abc");
+it("API lọc hồ sơ từ chối học kỳ không hợp lệ với HTTP 400 và error.fields.semester", 
+    $invalidFeeSemRes['status'] === 400 && !empty($invalidFeeSemRes['body']['error']['fields']['semester'])
+);
+
+$longReceiptRes = $api->request('GET', "/receipts/" . str_repeat('p', 101));
+it("API tra cứu biên lai từ chối mã tra cứu dài hơn 100 ký tự với HTTP 400 và error.fields.receipt_no", 
+    $longReceiptRes['status'] === 400 && !empty($longReceiptRes['body']['error']['fields']['receipt_no'])
+);
+
+$diacriticsReceiptRes = $api->request('GET', "/receipts/" . urlencode("   ̀ ́ ̃   "));
+it("API tra cứu biên lai từ chối mã tra cứu chỉ chứa dấu thanh với HTTP 400 và error.fields.receipt_no", 
+    $diacriticsReceiptRes['status'] === 400 && !empty($diacriticsReceiptRes['body']['error']['fields']['receipt_no'])
+);
+
+// ----------------------------------------------------------------------------
+// 19. KIỂM THỬ DỮ LIỆU SINH VIÊN MỞ RỘNG (PART 2: REFRESHED STUDENT CASES)
+// ----------------------------------------------------------------------------
+suite_header("19. Kiểm thử dữ liệu sinh viên mở rộng (Part 2: Refreshed Student Cases)");
+
+// 19.1 SV008: "Lý Thị Mỹ Linh", class "K22-QTKD1"
+$sv008 = $pdo->query("SELECT * FROM students WHERE student_code = 'SV008'")->fetch(PDO::FETCH_ASSOC);
+it("SV008 'Lý Thị Mỹ Linh' tồn tại trong cơ sở dữ liệu với lớp 'K22-QTKD1' và dấu tiếng Việt đầy đủ", 
+    !empty($sv008) && $sv008['full_name'] === 'Lý Thị Mỹ Linh' && $sv008['class_name'] === 'K22-QTKD1'
+);
+
+// 19.2 SV009: "Đoàn Văn Ơn Ích" diacritic-insensitive search matching "don" and "đoàn"
+$searchDonRes = $api->request('GET', "/students?q=don");
+$searchDonStudents = array_column($searchDonRes['body']['data'] ?? [], 'student_code');
+it("Tìm kiếm sinh viên với từ khóa 'don' tìm thấy SV009 'Đoàn Văn Ơn Ích'", 
+    in_array('SV009', $searchDonStudents, true)
+);
+
+$searchDoanRes = $api->request('GET', "/students?q=" . urlencode("đoàn"));
+$searchDoanStudents = array_column($searchDoanRes['body']['data'] ?? [], 'student_code');
+it("Tìm kiếm sinh viên với từ khóa 'đoàn' tìm thấy SV009 'Đoàn Văn Ơn Ích'", 
+    in_array('SV009', $searchDoanStudents, true)
+);
+
+// 19.3 SV010: 40-character name accepted and near-limit display
+$sv010 = $pdo->query("SELECT * FROM students WHERE student_code = 'SV010'")->fetch(PDO::FETCH_ASSOC);
+$sv010NameLen = mb_strlen($sv010['full_name'] ?? '', 'UTF-8');
+it("SV010 tồn tại với họ tên chính xác 40 ký tự ('Trương Thị Ánh Tuyết Hoàng Thị Hồng Loan')", 
+    !empty($sv010) && $sv010NameLen === 40
+);
+
+// 19.4 SV011: class NULL, no fee records, deletable
+$sv011 = $pdo->query("SELECT * FROM students WHERE student_code = 'SV011'")->fetch(PDO::FETCH_ASSOC);
+$sv011FeeCount = (int)$pdo->query("SELECT COUNT(*) FROM fee_records WHERE student_id = {$sv011['id']}")->fetchColumn();
+it("SV011 'Ngô Quang Khải' có class_name là NULL và không có hồ sơ học phí nào", 
+    !empty($sv011) && $sv011['class_name'] === null && $sv011FeeCount === 0
+);
+
+$delSv011Res = $api->request('DELETE', "/students/{$sv011['id']}");
+$sv011AfterDel = $pdo->query("SELECT COUNT(*) FROM students WHERE student_code = 'SV011'")->fetchColumn();
+it("Xóa sinh viên SV011 không có hồ sơ học phí thành công (HTTP 200) và bản ghi bị xóa khỏi cơ sở dữ liệu", 
+    $delSv011Res['status'] === 200 && (int)$sv011AfterDel === 0
+);
+
+// Re-insert SV011 so future seed tests remain clean
+$pdo->prepare("INSERT INTO students (student_code, full_name, class_name, name_search, created_at, updated_at) VALUES ('SV011', 'Ngô Quang Khải', NULL, 'ngo quang khai', NOW(), NOW())")->execute();
+
+// 19.5 SV012: Fee record 13 with 50% exemption, refund completed, second payment, running balance
+$sv012 = $pdo->query("SELECT * FROM students WHERE student_code = 'SV012'")->fetch(PDO::FETCH_ASSOC);
+$fee13 = fetch_fee_record_summary($pdo, 13);
+$fr13Exempt = $pdo->query("SELECT * FROM exemptions WHERE fee_record_id = 13")->fetch(PDO::FETCH_ASSOC);
+$fr13Refund = $pdo->query("SELECT * FROM refund_requests WHERE fee_record_id = 13")->fetch(PDO::FETCH_ASSOC);
+
+it("SV012 có hồ sơ học phí #13 với miễn giảm 50% (Gross: 8.000.000, Net: 4.000.000)", 
+    !empty($fee13) 
+    && (int)$fee13['gross_tuition'] === 8000000 
+    && (int)$fr13Exempt['value'] === 50 
+    && (int)$fee13['net_due'] === 4000000
+);
+
+it("SV012 có yêu cầu hoàn tiền #4 trạng thái 'completed' (500.000 VND)", 
+    !empty($fr13Refund) 
+    && $fr13Refund['status'] === 'completed' 
+    && (int)$fr13Refund['amount'] === 500000
+);
+
+$historySv012Res = $api->request('GET', "/history?student=SV012");
+$histEntries = $historySv012Res['body']['data'] ?? [];
+$histAmounts = array_map('intval', array_column($histEntries, 'amount'));
+$histBalances = array_map('intval', array_column($histEntries, 'remaining_balance'));
+it("Tra cứu lịch sử giao dịch của SV012 trả về đúng 2 giao dịch với số dư lũy kế (running balance) chuẩn", 
+    count($histEntries) === 2 
+    && in_array(3000000, $histAmounts, true) 
+    && in_array(1500000, $histAmounts, true)
+    && in_array(1000000, $histBalances, true)
+    && in_array(0, $histBalances, true)
+);
+
+// 19.6 Lowercase student code normalization for "sv013"
+$sv013Db = $pdo->query("SELECT student_code FROM students WHERE full_name = 'Hoàng Minh Tuấn'")->fetchColumn();
+it("Mã sinh viên viết thường 'sv013' trong seed data được tự động lưu thành chữ in hoa 'SV013'", 
+    $sv013Db === 'SV013'
+);
+
+$apiAddLowerCodeRes = $api->request('POST', "/students", [
+    'student_code' => 'sv2026888',
+    'full_name'    => 'Trần Văn In Hoa'
+]);
+$savedLowerCode = (string)$pdo->query("SELECT student_code FROM students WHERE full_name = 'Trần Văn In Hoa'")->fetchColumn();
+it("Thêm sinh viên qua API với mã chữ thường ('sv2026888') được chuẩn hóa và lưu thành chữ in hoa ('SV2026888')", 
+    $apiAddLowerCodeRes['status'] === 201 && $savedLowerCode === 'SV2026888'
+);
+$pdo->exec("DELETE FROM students WHERE student_code = 'SV2026888'");
+
+// 19.7 Name boundary: 40-character name accepted and 101-character name rejected
+$name40Char = "Trương Thị Ánh Tuyết Hoàng Thị Hồng Loan";
+$add40CharRes = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST40',
+    'full_name'    => $name40Char
+]);
+it("Tên có độ dài cận biên 40 ký tự được API chấp nhận tạo mới thành công (HTTP 201)", 
+    $add40CharRes['status'] === 201
+);
+$pdo->exec("DELETE FROM students WHERE student_code = 'SVTEST40'");
+
+$name101Char = str_repeat('A', 101);
+$add101CharRes = $api->request('POST', "/students", [
+    'student_code' => 'SVTEST101',
+    'full_name'    => $name101Char
+]);
+it("Tên vượt giới hạn 101 ký tự bị API từ chối với HTTP 400 và error.fields.full_name", 
+    $add101CharRes['status'] === 400 && !empty($add101CharRes['body']['error']['fields']['full_name'])
+);
 
 // ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ

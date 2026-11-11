@@ -167,29 +167,175 @@
     }
   }
 
-  // Tiện ích gắn lỗi trường dữ liệu inline vào giao diện
-  function renderFieldErrors(formEl, fields = {}) {
-    if (!formEl) return;
-    // Xóa các thông báo lỗi cũ
-    formEl.querySelectorAll('.error-msg').forEach(el => {
-      el.textContent = '';
-      el.classList.remove('visible');
-    });
-    formEl.querySelectorAll('.is-invalid').forEach(el => {
-      el.classList.remove('is-invalid');
-    });
+  // Map standard backend field names to client form element selectors
+  const FIELD_SELECTORS = {
+    'username': ['[name="username"]', '#login-username'],
+    'password': ['[name="password"]', '#login-password'],
+    'student_code': ['#student-id-input', '[name="studentId"]', '[name="student_code"]'],
+    'studentId': ['#student-id-input', '[name="studentId"]'],
+    'full_name': ['#student-name-input', '[name="fullName"]', '[name="full_name"]'],
+    'fullName': ['#student-name-input', '[name="fullName"]'],
+    'class_name': ['#student-class-input', '[name="className"]', '[name="class_name"]'],
+    'className': ['#student-class-input', '[name="className"]'],
+    'term_no': ['#semester-term-select', '[name="term_no"]'],
+    'academic_year_start': ['#semester-year-input', '[name="academic_year_start"]'],
+    'semester_id': ['#rate-semester-input', '#fee-semester-select', '#report-semester-filter', '#fee-filter-semester', '#ledger-filter-semester', '[name="semester_id"]', '[name="semester"]'],
+    'semester': ['#rate-semester-input', '#fee-semester-select', '#report-semester-filter', '#fee-filter-semester', '#ledger-filter-semester', '[name="semester"]'],
+    'price_per_credit': ['#rate-price-input', '[name="pricePerCredit"]', '[name="price_per_credit"]'],
+    'pricePerCredit': ['#rate-price-input', '[name="pricePerCredit"]'],
+    'student_id': ['#fee-student-select', '[name="studentId"]', '[name="student_id"]'],
+    'registered_credits': ['#fee-credits-input', '[name="registeredCredits"]', '[name="registered_credits"]'],
+    'registeredCredits': ['#fee-credits-input', '[name="registeredCredits"]'],
+    'type': ['[name="exemptionType"]:checked', '[name="exemptionType"]'],
+    'value': ['#exemption-value-input', '[name="exemptionValue"]', '[name="value"]'],
+    'exemptionValue': ['#exemption-value-input', '[name="exemptionValue"]'],
+    'reason': ['#exemption-reason-input', '#refund-reason-input', '#cancel-refund-reason', '#reversal-reason-input', '#res-refund-reason', '#res-transfer-reason', '[name="reason"]', '[name="refundReason"]', '[name="reversalReason"]', '[name="cancel_reason"]', '[name="transferReason"]'],
+    'fee_record_id': ['#payment-fee-select', '[name="feeRecordId"]', '[name="fee_record_id"]'],
+    'feeRecordId': ['#payment-fee-select', '[name="feeRecordId"]'],
+    'amount': ['#payment-amount-input', '#refund-amount-input', '#res-refund-amount', '#res-transfer-amount', '#rate-price-input', '[name="amount"]', '[name="refundAmount"]', '[name="transferAmount"]', '[name="pricePerCredit"]'],
+    'payment_date': ['#payment-date-input', '[name="paymentDate"]', '[name="payment_date"]'],
+    'paymentDate': ['#payment-date-input', '[name="paymentDate"]'],
+    'entry_date': ['#payment-date-input', '[name="entry_date"]', '[name="paymentDate"]'],
+    'method': ['#payment-method-select', '[name="method"]'],
+    'note': ['#payment-note-input', '[name="note"]'],
+    'refund_amount': ['#refund-amount-input', '#res-refund-amount', '[name="refundAmount"]'],
+    'refundAmount': ['#refund-amount-input', '#res-refund-amount', '[name="refundAmount"]'],
+    'refund_reason': ['#refund-reason-input', '#res-refund-reason', '[name="refundReason"]'],
+    'refundReason': ['#refund-reason-input', '#res-refund-reason', '[name="refundReason"]'],
+    'cancel_reason': ['#cancel-refund-reason', '[name="cancel_reason"]'],
+    'reversal_reason': ['#reversal-reason-input', '[name="reversalReason"]'],
+    'reversalReason': ['#reversal-reason-input', '[name="reversalReason"]'],
+    'target_fee_record_id': ['#res-target-select', '[name="targetFeeRecordId"]'],
+    'targetFeeRecordId': ['#res-target-select', '[name="targetFeeRecordId"]'],
+    'transfer_amount': ['#res-transfer-amount', '[name="transferAmount"]'],
+    'transferAmount': ['#res-transfer-amount', '[name="transferAmount"]'],
+    'transfer_reason': ['#res-transfer-reason', '[name="transferReason"]'],
+    'transferReason': ['#res-transfer-reason', '[name="transferReason"]'],
+    'from': ['#ledger-filter-from-date', '[name="from"]'],
+    'to': ['#ledger-filter-to-date', '[name="to"]'],
+    'q': ['#ledger-search-keyword', '#student-search-input', '#fee-search-student', '#receipt-lookup-input', '[name="q"]'],
+    'student': ['#fee-search-student', '#student-search-input', '#ledger-search-keyword', '[name="student"]'],
+    'status': ['#fee-filter-status', '#ledger-filter-status', '[name="status"]'],
+    'receipt_no': ['#receipt-lookup-input', '[name="receiptNo"]'],
+    'receiptNo': ['#receipt-lookup-input', '[name="receiptNo"]']
+  };
 
-    Object.keys(fields).forEach(fieldName => {
-      const input = formEl.querySelector(`[name="${fieldName}"], #${fieldName}`);
-      if (input) {
-        input.classList.add('is-invalid');
-        const errSpan = formEl.querySelector(`#${input.id}-error, .error-for-${fieldName}`);
-        if (errSpan) {
-          errSpan.textContent = fields[fieldName];
-          errSpan.classList.add('visible');
+  function findInputElement(formEl, fieldName) {
+    const scope = formEl || document;
+    let input = scope.querySelector(`[name="${fieldName}"], #${fieldName}`);
+    if (input) return input;
+    const mapped = FIELD_SELECTORS[fieldName];
+    if (mapped) {
+      for (const sel of mapped) {
+        input = scope.querySelector(sel);
+        if (input) return input;
+      }
+    }
+    return null;
+  }
+
+  function findErrorSpan(formEl, inputEl, fieldName) {
+    if (inputEl) {
+      const describedBy = inputEl.getAttribute('aria-describedby');
+      if (describedBy) {
+        const span = document.getElementById(describedBy);
+        if (span) return span;
+      }
+      if (inputEl.id) {
+        const span = (formEl || document).querySelector(`#${inputEl.id}-error`);
+        if (span) return span;
+      }
+    }
+    return (formEl || document).querySelector(`.error-for-${fieldName}`);
+  }
+
+  function setFieldError(formEl, inputEl, errorMsg, fieldName = '') {
+    if (inputEl) {
+      inputEl.classList.add('is-invalid');
+      inputEl.setAttribute('aria-invalid', 'true');
+      const errSpan = findErrorSpan(formEl, inputEl, fieldName);
+      if (errSpan) {
+        errSpan.textContent = errorMsg;
+        errSpan.classList.add('visible');
+      }
+    }
+  }
+
+  function clearFieldError(formEl, inputEl, fieldName = '') {
+    if (inputEl) {
+      inputEl.classList.remove('is-invalid');
+      inputEl.removeAttribute('aria-invalid');
+      const errSpan = findErrorSpan(formEl, inputEl, fieldName);
+      if (errSpan) {
+        errSpan.textContent = '';
+        errSpan.classList.remove('visible');
+      }
+    }
+    const summaryEl = formEl ? formEl.querySelector('.form-error-summary') : null;
+    if (summaryEl && formEl) {
+      const remainingInvalid = formEl.querySelector('.is-invalid, [aria-invalid="true"]');
+      if (!remainingInvalid) {
+        summaryEl.textContent = '';
+        summaryEl.hidden = true;
+      } else {
+        const firstSpan = findErrorSpan(formEl, remainingInvalid, '');
+        if (firstSpan && firstSpan.textContent) {
+          summaryEl.textContent = firstSpan.textContent;
+          summaryEl.hidden = false;
         }
       }
+    }
+  }
+
+  // Tiện ích gắn lỗi trường dữ liệu inline vào giao diện
+  function renderFieldErrors(formEl, fields = {}, unmappedCallback = null) {
+    if (!formEl) return;
+    clearFieldErrors(formEl);
+
+    let firstInvalidInput = null;
+    let firstErrorMessage = '';
+    const unmappedErrors = [];
+
+    Object.entries(fields).forEach(([fieldName, errorMsg]) => {
+      const input = findInputElement(formEl, fieldName);
+      if (input) {
+        setFieldError(formEl, input, errorMsg, fieldName);
+        if (!firstInvalidInput) {
+          firstInvalidInput = input;
+          firstErrorMessage = errorMsg;
+        }
+      } else {
+        unmappedErrors.push(errorMsg);
+      }
     });
+
+    const summaryEl = formEl.querySelector('.form-error-summary');
+    if (summaryEl) {
+      if (firstErrorMessage) {
+        summaryEl.textContent = firstErrorMessage;
+        summaryEl.hidden = false;
+        summaryEl.setAttribute('role', 'alert');
+      } else {
+        summaryEl.textContent = '';
+        summaryEl.hidden = true;
+      }
+    }
+
+    if (firstInvalidInput && typeof firstInvalidInput.focus === 'function') {
+      firstInvalidInput.focus();
+    }
+
+    if (unmappedErrors.length > 0) {
+      unmappedErrors.forEach(msg => {
+        if (typeof unmappedCallback === 'function') {
+          unmappedCallback(msg);
+        } else if (typeof window.showAppToast === 'function') {
+          window.showAppToast(msg, 'error');
+        } else {
+          console.error('Server error:', msg);
+        }
+      });
+    }
   }
 
   function clearFieldErrors(formEl) {
@@ -201,6 +347,14 @@
     formEl.querySelectorAll('.is-invalid').forEach(el => {
       el.classList.remove('is-invalid');
     });
+    formEl.querySelectorAll('[aria-invalid="true"]').forEach(el => {
+      el.removeAttribute('aria-invalid');
+    });
+    const summaryEl = formEl.querySelector('.form-error-summary');
+    if (summaryEl) {
+      summaryEl.textContent = '';
+      summaryEl.hidden = true;
+    }
     const banner = formEl.querySelector('.error-banner');
     if (banner) {
       banner.textContent = '';
@@ -219,6 +373,10 @@
     getCsrfToken: () => csrfToken,
     renderFieldErrors,
     clearFieldErrors,
+    setFieldError,
+    clearFieldError,
+    findInputElement,
+    findErrorSpan,
     getBaseUrl: () => API_BASE
   };
 

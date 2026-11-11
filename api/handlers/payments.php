@@ -50,17 +50,19 @@ function handle_payments_routes(string $method, string $path, array $matches): v
 
         $errors = [];
         if ($amount === null || $amount <= 0) {
-            $errors['amount'] = 'Số tiền thanh toán phải là số nguyên dương hợp lệ.';
+            $errors['amount'] = 'Số tiền phải là số nguyên dương.';
         }
         if (!in_array($payMethod, ['Tiền mặt', 'Chuyển khoản', 'Thẻ'], true)) {
             $errors['method'] = "Phương thức thanh toán phải là 'Tiền mặt', 'Chuyển khoản' hoặc 'Thẻ'.";
         }
         if ($hasCustomDate) {
-            $d = DateTime::createFromFormat('Y-m-d', $entryDate);
-            if (!$d || $d->format('Y-m-d') !== $entryDate) {
-                $errors['entry_date'] = 'Ngày thu không đúng định dạng YYYY-MM-DD.';
-            } elseif ($entryDate > $today) {
-                $errors['entry_date'] = 'Ngày thu không được lớn hơn ngày hiện tại của hệ thống.';
+            $parsedDate = parse_and_validate_date((string)$input['entry_date']);
+            if ($parsedDate === false) {
+                $errors['entry_date'] = 'Ngày thanh toán không hợp lệ.';
+            } elseif ($parsedDate > $today) {
+                $errors['entry_date'] = 'Ngày thanh toán không được lớn hơn hôm nay.';
+            } else {
+                $entryDate = $parsedDate;
             }
         }
         if ($note !== null && !validate_string_length($note, 0, 255)) {
@@ -181,9 +183,13 @@ function handle_payments_routes(string $method, string $path, array $matches): v
         }
 
         $reason = trim((string)($input['reason'] ?? ''));
-        if ($reason === '' || !validate_string_length($reason, 1, 200)) {
-            json_error('Lý do đảo mục là bắt buộc và tối đa 200 ký tự.', 'VALIDATION_ERROR', 400, [
-                'reason' => 'Lý do đảo mục không được để trống và tối đa 200 ký tự.'
+        if ($reason === '') {
+            json_error('Lý do không được để trống.', 'VALIDATION_ERROR', 400, [
+                'reason' => 'Lý do không được để trống.'
+            ]);
+        } elseif (mb_strlen($reason, 'UTF-8') > 200) {
+            json_error('Lý do không được vượt quá 200 ký tự.', 'VALIDATION_ERROR', 400, [
+                'reason' => 'Lý do không được vượt quá 200 ký tự.'
             ]);
         }
 

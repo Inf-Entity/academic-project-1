@@ -19,9 +19,15 @@ function handle_students_routes(string $method, string $path, array $matches): v
 
     // 1. GET /api/students (List & Search)
     if ($path === '/api/students' && $method === 'GET') {
-        $q = trim((string)($_GET['q'] ?? ''));
-        if ($q !== '') {
-            $norm = normalize_vietnamese($q);
+        $rawQ = (string)($_GET['q'] ?? '');
+        if (mb_strlen($rawQ, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, [
+                'q' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.'
+            ]);
+        }
+
+        if (!is_search_query_empty_or_diacritics_only($rawQ)) {
+            $norm = normalize_vietnamese($rawQ);
             $stmt = $db->prepare(
                 "SELECT id, student_code, full_name, class_name, created_at, updated_at
                  FROM students
@@ -29,7 +35,7 @@ function handle_students_routes(string $method, string $path, array $matches): v
                  ORDER BY id ASC"
             );
             $stmt->execute([
-                'code' => '%' . strtoupper($q) . '%',
+                'code' => '%' . strtoupper(trim($rawQ)) . '%',
                 'q'    => '%' . $norm . '%'
             ]);
         } else {
@@ -48,19 +54,23 @@ function handle_students_routes(string $method, string $path, array $matches): v
         $input = get_json_input();
         validate_allowed_fields($input, ['student_code', 'full_name', 'class_name']);
 
-        $code = validate_student_code((string)($input['student_code'] ?? ''));
-        $name = trim((string)($input['full_name'] ?? ''));
+        $rawCode = isset($input['student_code']) ? trim((string)$input['student_code']) : '';
+        $code = validate_student_code($rawCode);
+        $nameError = null;
+        $name = validate_full_name($input['full_name'] ?? null, $nameError);
         $class = isset($input['class_name']) ? trim((string)$input['class_name']) : null;
         if ($class === '') {
             $class = null;
         }
 
         $errors = [];
-        if (!$code) {
-            $errors['student_code'] = 'Mã sinh viên phải gồm 6-12 ký tự chữ và số.';
+        if ($rawCode === '') {
+            $errors['student_code'] = 'Mã sinh viên không được để trống.';
+        } elseif (!$code) {
+            $errors['student_code'] = 'Mã sinh viên phải gồm 6–12 ký tự chữ và số.';
         }
-        if ($name === '' || !validate_string_length($name, 1, 100)) {
-            $errors['full_name'] = 'Họ và tên không được để trống và tối đa 100 ký tự.';
+        if ($nameError !== null) {
+            $errors['full_name'] = $nameError;
         }
         if ($class !== null && !validate_string_length($class, 1, 50)) {
             $errors['class_name'] = 'Lớp sinh hoạt tối đa 50 ký tự.';
@@ -74,12 +84,12 @@ function handle_students_routes(string $method, string $path, array $matches): v
         $checkStmt = $db->prepare("SELECT id FROM students WHERE student_code = :code LIMIT 1");
         $checkStmt->execute(['code' => $code]);
         if ($checkStmt->fetch()) {
-            json_error("Mã sinh viên '{$code}' đã tồn tại trong hệ thống.", 'DUPLICATE_CODE', 409, [
-                'student_code' => "Mã sinh viên '{$code}' đã tồn tại."
+            json_error("Mã sinh viên '{$code}' đã tồn tại trong hệ thống.", 'DUPLICATE_CODE', 400, [
+                'student_code' => 'Mã sinh viên đã tồn tại.'
             ]);
         }
 
-        $nameSearch = normalize_vietnamese($name);
+        $nameSearch = generate_name_search($name);
         $insStmt = $db->prepare(
             "INSERT INTO students (student_code, full_name, name_search, class_name, created_at, updated_at)
              VALUES (:code, :name, :name_search, :class, NOW(), NOW())"
@@ -185,19 +195,23 @@ function handle_students_routes(string $method, string $path, array $matches): v
         $input = get_json_input();
         validate_allowed_fields($input, ['student_code', 'full_name', 'class_name']);
 
-        $code = isset($input['student_code']) ? validate_student_code((string)$input['student_code']) : $existing['student_code'];
-        $name = isset($input['full_name']) ? trim((string)$input['full_name']) : $existing['full_name'];
+        $rawCode = isset($input['student_code']) ? trim((string)$input['student_code']) : $existing['student_code'];
+        $code = validate_student_code($rawCode);
+        $nameError = null;
+        $name = isset($input['full_name']) ? validate_full_name($input['full_name'], $nameError) : $existing['full_name'];
         $class = isset($input['class_name']) ? trim((string)$input['class_name']) : $existing['class_name'];
         if ($class === '') {
             $class = null;
         }
 
         $errors = [];
-        if (!$code) {
-            $errors['student_code'] = 'Mã sinh viên phải gồm 6-12 ký tự chữ và số.';
+        if ($rawCode === '') {
+            $errors['student_code'] = 'Mã sinh viên không được để trống.';
+        } elseif (!$code) {
+            $errors['student_code'] = 'Mã sinh viên phải gồm 6–12 ký tự chữ và số.';
         }
-        if ($name === '' || !validate_string_length($name, 1, 100)) {
-            $errors['full_name'] = 'Họ và tên không được để trống và tối đa 100 ký tự.';
+        if ($nameError !== null) {
+            $errors['full_name'] = $nameError;
         }
         if ($class !== null && !validate_string_length($class, 1, 50)) {
             $errors['class_name'] = 'Lớp sinh hoạt tối đa 50 ký tự.';
@@ -210,13 +224,13 @@ function handle_students_routes(string $method, string $path, array $matches): v
             $checkStmt = $db->prepare("SELECT id FROM students WHERE student_code = :code AND id != :id LIMIT 1");
             $checkStmt->execute(['code' => $code, 'id' => $studentId]);
             if ($checkStmt->fetch()) {
-                json_error("Mã sinh viên '{$code}' đã tồn tại trong hệ thống.", 'DUPLICATE_CODE', 409, [
-                    'student_code' => "Mã sinh viên '{$code}' đã tồn tại."
+                json_error("Mã sinh viên '{$code}' đã tồn tại trong hệ thống.", 'DUPLICATE_CODE', 400, [
+                    'student_code' => 'Mã sinh viên đã tồn tại.'
                 ]);
             }
         }
 
-        $nameSearch = normalize_vietnamese($name);
+        $nameSearch = generate_name_search($name);
         $upStmt = $db->prepare(
             "UPDATE students SET student_code = :code, full_name = :name, name_search = :name_search, class_name = :class, updated_at = NOW()
              WHERE id = :id"

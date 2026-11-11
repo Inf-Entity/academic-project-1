@@ -23,6 +23,28 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $semesterFilter = $_GET['semester'] ?? ($_GET['semester_id'] ?? null);
         $statusFilter = $_GET['status'] ?? null;
 
+        if ($studentFilter !== null && is_string($studentFilter)) {
+            $studentFilterTrimmed = trim($studentFilter);
+            if (mb_strlen($studentFilterTrimmed, 'UTF-8') > 100) {
+                json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, [
+                    'student' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.'
+                ]);
+            }
+            if (is_search_query_empty_or_diacritics_only($studentFilterTrimmed)) {
+                $studentFilter = null;
+            } else {
+                $studentFilter = $studentFilterTrimmed;
+            }
+        }
+
+        if (!empty($semesterFilter) && $semesterFilter !== 'ALL') {
+            if (!is_numeric($semesterFilter) || (int)$semesterFilter <= 0) {
+                json_error('Vui lòng chọn học kỳ hợp lệ.', 'VALIDATION_ERROR', 400, [
+                    'semester' => 'Vui lòng chọn học kỳ.'
+                ]);
+            }
+        }
+
         $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
                     v.*,
@@ -41,8 +63,10 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
                 $sql .= " AND v.student_id = :stId";
                 $params['stId'] = (int)$studentFilter;
             } else {
-                $sql .= " AND s.student_code = :stCode";
-                $params['stCode'] = strtoupper(trim($studentFilter));
+                $normSt = normalize_vietnamese($studentFilter);
+                $sql .= " AND (s.student_code LIKE :stCode OR s.name_search LIKE :stName)";
+                $params['stCode'] = '%' . strtoupper(trim($studentFilter)) . '%';
+                $params['stName'] = '%' . $normSt . '%';
             }
         }
 
@@ -182,8 +206,10 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         if (!in_array($type, ['percent', 'fixed'], true)) {
             $errors['type'] = "Loại miễn giảm phải là 'percent' hoặc 'fixed'.";
         }
-        if ($reason === '' || !validate_string_length($reason, 1, 200)) {
-            $errors['reason'] = 'Lý do miễn giảm là bắt buộc và tối đa 200 ký tự.';
+        if ($reason === '') {
+            $errors['reason'] = 'Lý do không được để trống.';
+        } elseif (mb_strlen($reason, 'UTF-8') > 200) {
+            $errors['reason'] = 'Lý do không được vượt quá 200 ký tự.';
         }
 
         // Lấy fee_record và lock
@@ -198,15 +224,16 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $valNum = 0;
 
         if ($type === 'percent') {
-            if (!is_numeric($rawVal) || (int)$rawVal != $rawVal || (int)$rawVal < 1 || (int)$rawVal > 100) {
+            $sVal = is_string($rawVal) ? trim($rawVal) : (string)$rawVal;
+            if (is_float($rawVal) || !preg_match('/^[0-9]+$/', $sVal) || (int)$sVal < 1 || (int)$sVal > 100) {
                 $errors['value'] = 'Phần trăm miễn giảm phải là số nguyên từ 1 đến 100.';
             } else {
-                $valNum = (int)$rawVal;
+                $valNum = (int)$sVal;
             }
         } elseif ($type === 'fixed') {
             $f = parse_currency($rawVal);
             if ($f === null || $f <= 0) {
-                $errors['value'] = 'Số tiền miễn giảm cố định phải là số nguyên dương lớn hơn 0.';
+                $errors['value'] = 'Số tiền phải là số nguyên dương.';
             } elseif ($f > $gross) {
                 $errors['value'] = 'Số tiền miễn giảm cố định không được vượt quá học phí gốc (' . number_format($gross, 0, ',', '.') . ' ₫).';
             } else {
@@ -399,10 +426,12 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
             $errors['target_fee_record_id'] = 'Vui lòng chọn hồ sơ đích.';
         }
         if ($amount === null || $amount <= 0) {
-            $errors['amount'] = 'Số tiền chuyển phải là số nguyên dương hợp lệ.';
+            $errors['amount'] = 'Số tiền phải là số nguyên dương.';
         }
-        if ($reason === '' || !validate_string_length($reason, 1, 200)) {
-            $errors['reason'] = 'Lý do chuyển tiền là bắt buộc và tối đa 200 ký tự.';
+        if ($reason === '') {
+            $errors['reason'] = 'Lý do không được để trống.';
+        } elseif (mb_strlen($reason, 'UTF-8') > 200) {
+            $errors['reason'] = 'Lý do không được vượt quá 200 ký tự.';
         }
         if (!empty($errors)) {
             json_error('Dữ liệu chuyển tiền không hợp lệ.', 'VALIDATION_ERROR', 400, $errors);

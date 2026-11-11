@@ -1226,3 +1226,162 @@ dialog::backdrop {
     display: block;
   }
 }
+
+/* ==========================================================================
+   PART 1: INVALID INPUT NOTIFICATIONS & TOAST NOTIFICATION SYSTEM
+   ========================================================================== */
+
+/* Red border on invalid fields (not color alone: combined with icon + message) */
+input.is-invalid,
+select.is-invalid,
+textarea.is-invalid,
+[aria-invalid="true"] {
+  border: 2px solid #dc2626 !important;
+  background-color: #fef2f2 !important;
+  outline: none;
+}
+
+/* Error message directly below field */
+.error-msg {
+  display: none;
+  color: #dc2626;
+  font-size: 0.825rem;
+  margin-top: 0.35rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.error-msg.visible,
+.error-msg:not(:empty) {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.error-msg:not(:empty)::before {
+  content: '⚠️';
+  flex-shrink: 0;
+  font-size: 0.9rem;
+}
+
+/* Form Error Summary banner at the top of form with role="alert" */
+.form-error-summary {
+  background-color: #fee2e2;
+  border: 1px solid #ef4444;
+  border-left: 4px solid #dc2626;
+  color: #991b1b;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm, 6px);
+  margin-bottom: 1.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.form-error-summary[hidden] {
+  display: none !important;
+}
+
+.form-error-summary::before {
+  content: '⚠️';
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+/* Global Toast Container (Stacks up to 3 visible toasts) */
+#toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
+  pointer-events: none;
+}
+
+.app-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem 1.15rem;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #ffffff;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  animation: toastSlideIn 0.3s ease forwards;
+  position: relative;
+  overflow: hidden;
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-toast.toast-error {
+  background-color: #dc2626;
+  border-left: 5px solid #991b1b;
+}
+
+.app-toast.toast-info {
+  background-color: #059669;
+  border-left: 5px solid #065f46;
+}
+
+.app-toast .toast-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.app-toast .toast-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.app-toast .toast-text {
+  word-break: break-word;
+  line-height: 1.4;
+}
+
+.app-toast .toast-close-btn {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0 0 0.5rem;
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+.app-toast .toast-close-btn:hover {
+  opacity: 1;
+}
+
+/* Receipt lookup card & form */
+.receipt-lookup-card {
+  margin-top: 1.5rem;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+}
+
+.receipt-lookup-form {
+  margin-top: 0.75rem;
+}

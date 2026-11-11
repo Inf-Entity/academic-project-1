@@ -51,7 +51,8 @@ function handle_semesters_routes(string $method, string $path, array $matches): 
         $chk = $db->prepare("SELECT id FROM semesters WHERE term_no = :term AND academic_year_start = :year LIMIT 1");
         $chk->execute(['term' => $termNo, 'year' => $yearStart]);
         if ($chk->fetch()) {
-            json_error("Học kỳ {$termNo} năm học {$yearStart}-" . ($yearStart + 1) . " đã tồn tại.", 'DUPLICATE_SEMESTER', 409);
+            $msg = "Học kỳ {$termNo} năm học {$yearStart}-" . ($yearStart + 1) . " đã tồn tại.";
+            json_error($msg, 'DUPLICATE_SEMESTER', 400, ['term_no' => $msg]);
         }
 
         $stmt = $db->prepare("INSERT INTO semesters (term_no, academic_year_start, created_at) VALUES (:term, :year, NOW())");
@@ -93,7 +94,8 @@ function handle_semesters_routes(string $method, string $path, array $matches): 
         $chk = $db->prepare("SELECT id FROM semesters WHERE term_no = :term AND academic_year_start = :year AND id != :id LIMIT 1");
         $chk->execute(['term' => $termNo, 'year' => $yearStart, 'id' => $id]);
         if ($chk->fetch()) {
-            json_error("Học kỳ {$termNo} năm học {$yearStart}-" . ($yearStart + 1) . " đã tồn tại.", 'DUPLICATE_SEMESTER', 409);
+            $msg = "Học kỳ {$termNo} năm học {$yearStart}-" . ($yearStart + 1) . " đã tồn tại.";
+            json_error($msg, 'DUPLICATE_SEMESTER', 400, ['term_no' => $msg]);
         }
 
         $up = $db->prepare("UPDATE semesters SET term_no = :term, academic_year_start = :year WHERE id = :id");

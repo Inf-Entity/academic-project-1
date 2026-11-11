@@ -123,7 +123,7 @@ if ($path === '/api/reports/summary') {
     exit;
 }
 
-if (preg_match('#^/api/receipts/(\d+)$#', $path, $m)) {
+if ($path === '/api/receipts' || preg_match('#^/api/receipts/([^/]+)$#', $path, $m)) {
     handle_receipts_routes($method, $path, $m ?? []);
     exit;
 }

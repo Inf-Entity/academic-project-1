@@ -139,7 +139,7 @@ Tệp `database/database.sql` là tệp hợp nhất mới nhất, đã bao gồ
   4. Bấm tab **Nhập** (Import). Xác nhận mục **Bảng mã của tập tin** (Character set of the file) là **utf-8** trước khi nạp tệp. Thực hiện nhập lần lượt các tệp theo đúng thứ tự:
      - **Bước 1:** Nhập `database/schema.sql` (Khởi tạo cấu trúc bảng, khóa ngoại RESTRICT, chỉ mục).
      - **Bước 2:** Nhập `database/create_app_user.sql` (Tạo người dùng `tuition_user` với quyền tối thiểu).
-     - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ, gồm: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền).
+     - **Bước 3:** Nhập `database/seed.sql` (Nạp dữ liệu mẫu chuẩn cho 9 bảng nghiệp vụ, gồm: 13 sinh viên, 13 hồ sơ học phí, 8 miễn giảm, 13 giao dịch sổ cái, 4 yêu cầu hoàn tiền).
   5. Mở Terminal / PowerShell và chạy lệnh CLI để khởi tạo tài khoản quản trị viên:
      ```bash
      cd C:\xampp\htdocs\tuition-system
@@ -196,7 +196,7 @@ Chạy tại thư mục gốc của dự án:
 php tests/run.php
 ```
 
-Bộ kiểm thử sử dụng cơ sở dữ liệu riêng `tuition_test`, tự động reset bảng và nạp dữ liệu mẫu trước khi kiểm tra (xác minh số lượng chuẩn: 7 sinh viên, 12 hồ sơ học phí, 7 miễn giảm, 11 giao dịch sổ cái, 3 yêu cầu hoàn tiền). Theo cấu hình được mô tả trong dự án, test runner bao gồm 100 bài kiểm thử tích hợp backend thuộc 16 nhóm quy tắc bảo mật và nghiệp vụ.
+Bộ kiểm thử sử dụng cơ sở dữ liệu riêng `tuition_test`, tự động reset bảng và nạp dữ liệu mẫu trước khi kiểm tra (xác minh số lượng chuẩn: 13 sinh viên, 13 hồ sơ học phí, 8 miễn giảm, 13 giao dịch sổ cái, 4 yêu cầu hoàn tiền). Theo cấu hình được mô tả trong dự án, test runner bao gồm các bài kiểm thử tích hợp backend thuộc 17 nhóm quy tắc bảo mật, nghiệp vụ và kiểm tra dữ liệu đầu vào.
 
 Các nội dung được kiểm tra gồm:
 
@@ -258,6 +258,12 @@ Test runner frontend nằm tại `tests/tests.js` và kết quả kiểm thử �
 | 26 | Thực hiện hoàn tiền 700.000 VND trên bản dữ liệu mới của SV007 HK2 2025-2026. | Yêu cầu hoàn tiền ở trạng thái chờ duyệt (pending); hồ sơ vẫn giữ cảnh báo nộp thừa cho đến khi duyệt hoàn tất. |
 | 27 | Hủy yêu cầu hoàn tiền đang chờ duyệt của SV007. | Yêu cầu chuyển sang đã hủy; số tiền nộp thừa khả dụng quay trở lại mức 700.000 VND. |
 | 28 | Thử đảo bút toán khoản thu 8.200.000 VND sau khi đã chuyển tiền. | Bị từ chối với thông báo "Không thể đảo bút toán vì số tiền đã được hoàn hoặc chuyển đi." và tổng tiền nộp không bị âm. |
+| 29 | Tìm kiếm SV009 "Đoàn Văn Ơn Ích" bằng từ khóa `don` và `đoàn`. | Cả hai từ khóa đều tìm được đúng SV009 nhờ cơ chế tìm kiếm không dấu mở rộng. |
+| 30 | Kiểm tra hiển thị bảng sinh viên với tên 40 ký tự của SV010. | Hiển thị đầy đủ tên SV010 "Trương Thị Ánh Tuyết Hoàng Thị Hồng Loan", bảng dữ liệu co giãn chuẩn, không tràn viền. |
+| 31 | Xóa sinh viên SV011 (lớp NULL, chưa có hồ sơ học phí). | Xóa thành công; sinh viên bị xóa hoàn toàn khỏi hệ thống mà không vướng ràng buộc khóa ngoại. |
+| 32 | Xem chi tiết và lịch sử thanh toán của SV012 "Bùi Hữu Thắng". | Hiển thị hồ sơ học phí (miễn giảm 50%), gồm 2 khoản nộp tiền và 1 hoàn tiền với số dư nợ lũy kế khớp 100%. |
+| 33 | Thêm sinh viên với mã viết thường `sv013`. | Hệ thống tự động chuẩn hóa và lưu trữ thành chữ in hoa `SV013`. |
+| 34 | Nhập dữ liệu không hợp lệ (số tiền sai định dạng, ngày tương lai, ký tự đặc biệt). | Thông báo lỗi inline hiển thị trực tiếp dưới từng trường nhập với viền đỏ và icon ⚠️; focus tự động về trường lỗi đầu tiên; thông báo tự xóa khi nhập giá trị hợp lệ. |
 
 ## Giới hạn đã biết
 

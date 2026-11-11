@@ -44,32 +44,395 @@
     if (el) el.textContent = text;
   }
 
-  function showToast(message, isError = false) {
-    let toast = document.getElementById('app-toast');
-    if (!toast) {
-      toast = document.createElement('div');
-      toast.id = 'app-toast';
-      toast.style.position = 'fixed';
-      toast.style.top = '20px';
-      toast.style.right = '20px';
-      toast.style.padding = '12px 20px';
-      toast.style.borderRadius = '8px';
-      toast.style.color = '#fff';
-      toast.style.fontWeight = '600';
-      toast.style.zIndex = '99999';
-      toast.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-      toast.style.transition = 'opacity 0.3s ease';
-      document.body.appendChild(toast);
-    }
-    toast.style.background = isError ? '#dc2626' : '#059669';
-    toast.textContent = message;
-    toast.style.display = 'block';
-    toast.style.opacity = '1';
+  const MAX_TOASTS = 3;
 
-    setTimeout(() => {
+  function showToast(message, isErrorOrType = false) {
+    const isError = (isErrorOrType === true || isErrorOrType === 'error');
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      container.className = 'toast-container';
+      container.setAttribute('aria-live', 'polite');
+      container.setAttribute('aria-atomic', 'true');
+      document.body.appendChild(container);
+    }
+
+    // Limit maximum visible toasts to 3
+    const existingToasts = container.querySelectorAll('.app-toast');
+    if (existingToasts.length >= MAX_TOASTS) {
+      existingToasts[0].remove();
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `app-toast ${isError ? 'toast-error' : 'toast-info'}`;
+    toast.setAttribute('role', isError ? 'alert' : 'status');
+    toast.tabIndex = 0;
+
+    const bodyDiv = document.createElement('div');
+    bodyDiv.className = 'toast-body';
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.setAttribute('aria-hidden', 'true');
+    iconSpan.textContent = isError ? '⚠️' : '✓';
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'toast-text';
+    textSpan.textContent = message;
+
+    bodyDiv.appendChild(iconSpan);
+    bodyDiv.appendChild(textSpan);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'toast-close-btn';
+    closeBtn.setAttribute('aria-label', 'Đóng thông báo');
+    closeBtn.innerHTML = '&times;';
+
+    toast.appendChild(bodyDiv);
+    toast.appendChild(closeBtn);
+
+    container.appendChild(toast);
+
+    let dismissTimer = null;
+    let isPaused = false;
+    let remainingTime = isError ? 8000 : 5000;
+    let startTime = Date.now();
+
+    function dismissToast() {
+      if (dismissTimer) clearTimeout(dismissTimer);
       toast.style.opacity = '0';
-      setTimeout(() => { toast.style.display = 'none'; }, 300);
-    }, 4000);
+      toast.style.transform = 'translateY(-10px)';
+      setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 300);
+    }
+
+    function startTimer() {
+      if (dismissTimer) clearTimeout(dismissTimer);
+      startTime = Date.now();
+      dismissTimer = setTimeout(() => {
+        if (!isPaused) dismissToast();
+      }, remainingTime);
+    }
+
+    // Pause auto-dismiss when focused or hovered
+    function pauseTimer() {
+      isPaused = true;
+      if (dismissTimer) {
+        clearTimeout(dismissTimer);
+        remainingTime -= (Date.now() - startTime);
+        if (remainingTime < 1000) remainingTime = 1000;
+      }
+    }
+
+    function resumeTimer() {
+      isPaused = false;
+      startTimer();
+    }
+
+    toast.addEventListener('focusin', pauseTimer);
+    toast.addEventListener('mouseenter', pauseTimer);
+    toast.addEventListener('focusout', resumeTimer);
+    toast.addEventListener('mouseleave', resumeTimer);
+
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      dismissToast();
+    });
+
+    startTimer();
+  }
+
+  // Global ESC listener to close newest visible toast
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      const container = document.getElementById('toast-container');
+      if (container) {
+        const toasts = container.querySelectorAll('.app-toast');
+        if (toasts.length > 0) {
+          const lastToast = toasts[toasts.length - 1];
+          lastToast.style.opacity = '0';
+          setTimeout(() => {
+            if (lastToast.parentNode) lastToast.parentNode.removeChild(lastToast);
+          }, 200);
+        }
+      }
+    }
+  });
+
+  window.showAppToast = showToast;
+
+  /* ==========================================================================
+     CLIENT-SIDE VALIDATION UTILITIES (PART 1)
+     ========================================================================== */
+
+  function parseClientCurrency(val) {
+    if (val === null || val === undefined) return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    let str = String(val).trim();
+    if (str === '') return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+
+    // Reject non-ASCII digits (e.g. Eastern Arabic ٣٠٠)
+    if (/[\u0660-\u0669\u06F0-\u06F9]/.test(str)) {
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    if (str.includes('-') || /[eE]/.test(str)) {
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    // Strip allowed currency symbols: ₫, đ, Đ, VND, vnd, Vnd
+    let s = str.replace(/^(?:₫|đ|Đ|\bVND\b|\bvnd\b|\bVnd\b)\s*/i, '')
+               .replace(/\s*(?:₫|đ|Đ|\bVND\b|\bvnd\b|\bVnd\b)$/i, '')
+               .trim();
+
+    if (s === '') return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+
+    // Strict ASCII digits and separators check
+    if (!/^[0-9\s.,]+$/.test(s)) {
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    let clean = null;
+    if (/^[0-9]{1,3}(\.[0-9]{3})+$/.test(s)) {
+      // Thousand separator with dot: 1.500.000
+      clean = s.replace(/\./g, '');
+    } else if (/^[0-9]{1,3}(,[0-9]{3})+$/.test(s)) {
+      // Thousand separator with comma: 1,500,000
+      clean = s.replace(/,/g, '');
+    } else if (/^[0-9]{1,3}( [0-9]{3})+$/.test(s)) {
+      // Thousand separator with space: 1 500 000
+      clean = s.replace(/ /g, '');
+    } else if (/^[0-9]+$/.test(s)) {
+      // Pure digits: 1500000
+      clean = s;
+    } else {
+      // Contains decimals (e.g. 1.5 or 1,5), invalid groupings, non-digit remnants, etc.
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    // Check leading zero (e.g. 0100)
+    if (clean.length > 1 && clean[0] === '0') {
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    const num = parseInt(clean, 10);
+    if (!Number.isFinite(num) || num <= 0) {
+      return { valid: false, error: 'Số tiền phải là số nguyên dương.' };
+    }
+
+    if (num > 999999999999) {
+      return { valid: false, error: 'Số tiền không được vượt quá 999.999.999.999 ₫.' };
+    }
+
+    return { valid: true, value: num, formatted: Number(num).toLocaleString('vi-VN') };
+  }
+
+  function validateClientStudentCode(val) {
+    if (!val) return { valid: false, error: 'Vui lòng nhập mã sinh viên.' };
+    const str = String(val).trim().toUpperCase();
+    if (!str) return { valid: false, error: 'Vui lòng nhập mã sinh viên.' };
+    if (!/^[A-Z0-9]{6,12}$/.test(str)) {
+      return { valid: false, error: 'Mã sinh viên phải gồm 6–12 ký tự chữ và số.' };
+    }
+    return { valid: true, value: str };
+  }
+
+  function validateClientFullName(val) {
+    if (!val) return { valid: false, error: 'Vui lòng nhập họ và tên.' };
+    let str = String(val).trim().normalize('NFC');
+    if (!str) return { valid: false, error: 'Vui lòng nhập họ và tên.' };
+
+    const len = Array.from(str).length;
+    if (len < 1 || len > 100) {
+      return { valid: false, error: 'Họ và tên phải từ 1 đến 100 ký tự.' };
+    }
+
+    if (/[\x00-\x1F\x7F]/.test(str)) {
+      return { valid: false, error: 'Họ và tên chứa ký tự điều khiển không hợp lệ.' };
+    }
+
+    if (/^[\d\s\p{P}\p{S}]+$/u.test(str)) {
+      return { valid: false, error: 'Họ và tên không được chỉ gồm chữ số hoặc ký hiệu.' };
+    }
+
+    return { valid: true, value: str };
+  }
+
+  function validateClientClassName(val) {
+    if (!val) return { valid: true, value: null };
+    const str = String(val).trim();
+    if (!str) return { valid: true, value: null };
+    if (Array.from(str).length > 50) {
+      return { valid: false, error: 'Tên lớp không được vượt quá 50 ký tự.' };
+    }
+    return { valid: true, value: str };
+  }
+
+  function validateClientReason(val, { required = true, fieldName = 'Lý do' } = {}) {
+    const str = val ? String(val).trim() : '';
+    if (required && !str) {
+      return { valid: false, error: `Vui lòng nhập ${fieldName.toLowerCase()}.` };
+    }
+    if (Array.from(str).length > 200) {
+      return { valid: false, error: `${fieldName} không được vượt quá 200 ký tự.` };
+    }
+    return { valid: true, value: str };
+  }
+
+  function parseClientDate(val, { disallowFuture = false, fieldName = 'Ngày' } = {}) {
+    if (!val) return { valid: false, error: `Vui lòng chọn ${fieldName.toLowerCase()}.` };
+    const str = String(val).trim();
+    if (!str) return { valid: false, error: `Vui lòng chọn ${fieldName.toLowerCase()}.` };
+
+    let day, month, year;
+    const dmyMatch = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+    const isoMatch = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+
+    if (dmyMatch) {
+      day = parseInt(dmyMatch[1], 10);
+      month = parseInt(dmyMatch[2], 10);
+      year = parseInt(dmyMatch[3], 10);
+    } else if (isoMatch) {
+      year = parseInt(isoMatch[1], 10);
+      month = parseInt(isoMatch[2], 10);
+      day = parseInt(isoMatch[3], 10);
+    } else {
+      return { valid: false, error: `${fieldName} không đúng định dạng (dd/mm/yyyy hoặc yyyy-mm-dd).` };
+    }
+
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) {
+      return { valid: false, error: `${fieldName} không hợp lệ trong lịch.` };
+    }
+
+    const daysInMonth = new Date(year, month, 0).getDate();
+    if (day > daysInMonth) {
+      return { valid: false, error: `${fieldName} không hợp lệ trong lịch.` };
+    }
+
+    const d = new Date(year, month - 1, day);
+    if (disallowFuture) {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        return { valid: false, error: 'Ngày thanh toán không được lớn hơn hôm nay.' };
+      }
+    }
+
+    const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return { valid: true, iso, day, month, year };
+  }
+
+  function validateClientPercentExemption(val) {
+    if (val === null || val === undefined) return { valid: false, error: 'Vui lòng nhập tỷ lệ miễn giảm.' };
+    const str = String(val).trim();
+    if (!str) return { valid: false, error: 'Vui lòng nhập tỷ lệ miễn giảm.' };
+
+    if (!/^\d+$/.test(str)) {
+      return { valid: false, error: 'Tỷ lệ miễn giảm phải là số nguyên từ 1 đến 100.' };
+    }
+
+    const num = parseInt(str, 10);
+    if (num < 1 || num > 100) {
+      return { valid: false, error: 'Tỷ lệ miễn giảm phải là số nguyên từ 1 đến 100.' };
+    }
+
+    return { valid: true, value: num };
+  }
+
+  function validateClientFixedExemption(val, grossTuition) {
+    const p = parseClientCurrency(val);
+    if (!p.valid) return p;
+    if (p.value <= 0) {
+      return { valid: false, error: 'Số tiền miễn giảm phải lớn hơn 0.' };
+    }
+    if (p.value > grossTuition) {
+      const grossFmt = Number(grossTuition).toLocaleString('vi-VN') + ' ₫';
+      return { valid: false, error: `Số tiền miễn giảm không được vượt quá học phí gốc (${grossFmt}).` };
+    }
+    return { valid: true, value: p.value, formatted: p.formatted };
+  }
+
+  function validateClientSemesterTerm(val) {
+    const num = parseInt(val, 10);
+    if (![1, 2, 3].includes(num)) {
+      return { valid: false, error: 'Học kỳ phải là 1, 2 hoặc 3.' };
+    }
+    return { valid: true, value: num };
+  }
+
+  function validateClientSearchQuery(val) {
+    if (!val) return { valid: true, value: '' };
+    const str = String(val).trim();
+    if (!str) return { valid: true, value: '' };
+    if (Array.from(str).length > 100) {
+      return { valid: false, error: 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.' };
+    }
+    const stripped = str.replace(/[\s\u0300-\u036f\u02b0-\u02ff`~^'"]/g, '');
+    if (stripped.length === 0) {
+      return { valid: true, value: '' };
+    }
+    return { valid: true, value: str };
+  }
+
+  function validateClientDateRange(fromVal, toVal) {
+    if (!fromVal || !toVal) return { valid: true };
+    const f = parseClientDate(fromVal, { fieldName: 'Từ ngày' });
+    const t = parseClientDate(toVal, { fieldName: 'Đến ngày' });
+    if (!f.valid || !t.valid) return { valid: true };
+    if (t.iso < f.iso) {
+      return { valid: false, field: 'to', error: 'Đến ngày không được nhỏ hơn từ ngày.' };
+    }
+    return { valid: true };
+  }
+
+  function bindInlineValidation(formEl, inputEl, validator, fieldName = '', onValidUpdate = null) {
+    if (!inputEl) return;
+
+    inputEl.addEventListener('blur', () => {
+      const res = validator(inputEl.value);
+      const isValid = (res === null || res === undefined || res.valid === true);
+      if (!isValid) {
+        const errorMsg = (typeof res === 'string') ? res : (res.error || 'Dữ liệu không hợp lệ.');
+        Api.setFieldError(formEl, inputEl, errorMsg, fieldName);
+      } else {
+        Api.clearFieldError(formEl, inputEl, fieldName);
+        if (res && res.formatted !== undefined) {
+          inputEl.value = res.formatted;
+        }
+        if (typeof onValidUpdate === 'function') {
+          onValidUpdate(res);
+        }
+      }
+    });
+
+    inputEl.addEventListener('input', () => {
+      if (inputEl.classList.contains('is-invalid') || inputEl.getAttribute('aria-invalid') === 'true') {
+        const res = validator(inputEl.value);
+        const isValid = (res === null || res === undefined || res.valid === true);
+        if (isValid) {
+          Api.clearFieldError(formEl, inputEl, fieldName);
+          if (res && res.formatted !== undefined) {
+            inputEl.value = res.formatted;
+          }
+          if (typeof onValidUpdate === 'function') {
+            onValidUpdate(res);
+          }
+        }
+      }
+    });
+  }
+
+  function bindCharCounter(textareaEl, counterEl, maxLen = 200) {
+    if (!textareaEl || !counterEl) return;
+    const update = () => {
+      const len = Array.from(textareaEl.value || '').length;
+      counterEl.textContent = String(len);
+    };
+    textareaEl.addEventListener('input', update);
+    textareaEl.addEventListener('change', update);
+    update();
   }
 
   function showConfirm(title, desc, onConfirm) {
@@ -158,18 +521,26 @@
   }
 
   async function handleLoginSubmit(e) {
-    e.preventDefault();
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
     const form = document.getElementById('login-form');
     const btn = document.getElementById('btn-login');
     const errBanner = document.getElementById('login-general-error');
     Api.clearFieldErrors(form);
 
     const username = form.username.value.trim();
-    const password = form.password.value;
+    const password = form.password.value; // Preserve leading and trailing spaces
 
     const fields = {};
-    if (!username) fields.username = 'Vui lòng nhập tên đăng nhập.';
-    if (!password) fields.password = 'Vui lòng nhập mật khẩu.';
+    if (!username) {
+      fields.username = 'Vui lòng nhập tên đăng nhập.';
+    } else if (Array.from(username).length > 50) {
+      fields.username = 'Tên đăng nhập không được vượt quá 50 ký tự.';
+    }
+    if (!password) {
+      fields.password = 'Vui lòng nhập mật khẩu.';
+    }
 
     if (Object.keys(fields).length > 0) {
       Api.renderFieldErrors(form, fields);
@@ -178,16 +549,19 @@
 
     try {
       const res = await Api.post('/login', { username, password }, btn);
-      if (res.ok) {
+      if (res && res.ok && res.data) {
         onLoginSuccess(res.data);
       }
     } catch (err) {
       if (err.fields && Object.keys(err.fields).length > 0) {
         Api.renderFieldErrors(form, err.fields);
+      } else {
+        showToast(err.message || 'Sai tên đăng nhập hoặc mật khẩu.', 'error');
       }
       if (errBanner) {
         errBanner.textContent = err.message || 'Sai tên đăng nhập hoặc mật khẩu.';
         errBanner.hidden = false;
+        errBanner.style.display = 'block';
       }
     }
   }
@@ -291,7 +665,8 @@
      ========================================================================== */
 
   async function loadReportsData() {
-    const semFilter = document.getElementById('report-semester-filter')?.value || 'ALL';
+    const semSelect = document.getElementById('report-semester-filter');
+    const semFilter = semSelect?.value || 'ALL';
     try {
       const summaryRes = await Api.get(`/reports/summary?semester=${encodeURIComponent(semFilter)}`);
       const feesRes = await Api.get(`/fee-records?semester=${encodeURIComponent(semFilter)}`);
@@ -302,8 +677,13 @@
       if (feesRes.ok) {
         renderReportsFeesTable(feesRes.data);
       }
+      if (semSelect) Api.clearFieldError(null, semSelect, 'semester');
     } catch (err) {
-      showToast('Lỗi tải báo cáo thống kê: ' + err.message, true);
+      if (err.fields && err.fields.semester && semSelect) {
+        Api.setFieldError(null, semSelect, err.fields.semester, 'semester');
+      } else {
+        showToast('Lỗi tải báo cáo thống kê: ' + err.message, 'error');
+      }
     }
   }
 
@@ -419,7 +799,19 @@
      ========================================================================== */
 
   async function loadStudentsData() {
-    const q = document.getElementById('student-search-input')?.value.trim() || '';
+    const searchInput = document.getElementById('student-search-input');
+    const rawQ = searchInput?.value || '';
+    const qRes = validateClientSearchQuery(rawQ, 100);
+    if (!qRes.valid) {
+      if (searchInput) {
+        Api.setFieldError(null, searchInput, qRes.error, 'q');
+      }
+      return;
+    } else if (searchInput) {
+      Api.clearFieldError(null, searchInput, 'q');
+    }
+
+    const q = qRes.value;
     try {
       const res = await Api.get(`/students${q ? `?q=${encodeURIComponent(q)}` : ''}`);
       if (res.ok) {
@@ -428,7 +820,11 @@
         populateStudentDropdowns();
       }
     } catch (err) {
-      showToast('Lỗi tải danh sách sinh viên: ' + err.message, true);
+      if (err.fields && err.fields.q && searchInput) {
+        Api.setFieldError(null, searchInput, err.fields.q, 'q');
+      } else {
+        showToast('Lỗi tải danh sách sinh viên: ' + err.message, 'error');
+      }
     }
   }
 
@@ -508,10 +904,25 @@
     Api.clearFieldErrors(form);
 
     const editId = form.dataset.editId;
+    const fields = {};
+    const codeRes = validateClientStudentCode(form.studentId.value);
+    if (!codeRes.valid) fields.studentId = codeRes.error;
+
+    const nameRes = validateClientFullName(form.fullName.value);
+    if (!nameRes.valid) fields.fullName = nameRes.error;
+
+    const classRes = validateClientClassName(form.className.value);
+    if (!classRes.valid) fields.className = classRes.error;
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
     const body = {
-      student_code: form.studentId.value.trim(),
-      full_name: form.fullName.value.trim(),
-      class_name: form.className.value.trim() || null
+      student_code: codeRes.value,
+      full_name: nameRes.value,
+      class_name: classRes.value
     };
 
     try {
@@ -526,7 +937,7 @@
       loadStudentsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -621,26 +1032,82 @@
     Api.clearFieldErrors(form);
 
     const semId = form.dataset.semesterId;
-    const price = form.pricePerCredit.value.trim();
+    const priceRes = parseClientCurrency(form.pricePerCredit.value);
+    const fields = {};
+
+    if (!semId && !form.semester.value.trim()) {
+      fields.semester = 'Vui lòng chọn hoặc nhập học kỳ.';
+    }
+    if (!priceRes.valid) {
+      fields.pricePerCredit = priceRes.error;
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
 
     try {
       if (semId) {
-        await Api.put(`/rates/${semId}`, { price_per_credit: price }, btn);
+        await Api.put(`/rates/${semId}`, { price_per_credit: priceRes.value }, btn);
         showToast('Cập nhật đơn giá tín chỉ thành công.');
       } else {
-        // Nếu tạo mới, tìm hoặc tạo semester trước
         const semName = form.semester.value.trim();
-        // Giả lập match semester từ tên hoặc học kỳ đầu tiên chưa có rate
         const existingSem = AppState.semesters.find(s => s.label.toLowerCase() === semName.toLowerCase());
         const targetSemId = existingSem ? existingSem.id : (AppState.semesters[0]?.id || 1);
-        await Api.post('/rates', { semester_id: targetSemId, price_per_credit: price }, btn);
+        await Api.post('/rates', { semester_id: targetSemId, price_per_credit: priceRes.value }, btn);
         showToast('Thiết lập định mức thành công.');
       }
       document.getElementById('modal-rate').close();
       loadRatesData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
+    }
+  }
+
+  function openSemesterModal() {
+    const modal = document.getElementById('modal-semester');
+    const form = document.getElementById('semester-form');
+    if (!modal || !form) return;
+    Api.clearFieldErrors(form);
+    form.reset();
+    form.academic_year_start.value = new Date().getFullYear();
+    modal.showModal();
+  }
+
+  async function handleSemesterSubmit(e) {
+    e.preventDefault();
+    const form = document.getElementById('semester-form');
+    const btn = document.getElementById('btn-save-semester');
+    Api.clearFieldErrors(form);
+
+    const termNo = form.term_no.value;
+    const yearStart = form.academic_year_start.value;
+
+    const fields = {};
+    const termRes = validateClientSemesterTerm(termNo);
+    if (!termRes.valid) fields.term_no = termRes.error;
+
+    const yearVal = parseInt(yearStart, 10);
+    if (isNaN(yearVal) || yearVal < 2000 || yearVal > 2100) {
+      fields.academic_year_start = 'Năm học bắt đầu không hợp lệ (từ năm 2000 đến 2100).';
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
+    try {
+      await Api.post('/semesters', { term_no: termRes.value, academic_year_start: yearVal }, btn);
+      showToast('Thêm học kỳ mới thành công.');
+      document.getElementById('modal-semester').close();
+      await loadSemestersList();
+      await loadRatesData();
+    } catch (err) {
+      if (err.fields) Api.renderFieldErrors(form, err.fields);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -665,9 +1132,23 @@
      ========================================================================== */
 
   async function loadFeesData() {
-    const sem = document.getElementById('fee-filter-semester')?.value || 'ALL';
-    const status = document.getElementById('fee-filter-status')?.value || 'ALL';
-    const search = document.getElementById('fee-search-student')?.value.trim() || '';
+    const semSelect = document.getElementById('fee-filter-semester');
+    const statusSelect = document.getElementById('fee-filter-status');
+    const searchInput = document.getElementById('fee-search-student');
+
+    const sem = semSelect?.value || 'ALL';
+    const status = statusSelect?.value || 'ALL';
+    const rawSearch = searchInput?.value || '';
+
+    const qRes = validateClientSearchQuery(rawSearch, 100);
+    if (!qRes.valid) {
+      if (searchInput) Api.setFieldError(null, searchInput, qRes.error, 'student');
+      return;
+    } else if (searchInput) {
+      Api.clearFieldError(null, searchInput, 'student');
+    }
+
+    const search = qRes.value;
 
     try {
       let url = `/fee-records?semester=${encodeURIComponent(sem)}&status=${encodeURIComponent(status)}`;
@@ -678,10 +1159,24 @@
         AppState.feeRecords = res.data || [];
         renderFeesTable(AppState.feeRecords);
         populatePaymentFeeSelect();
+        if (semSelect) Api.clearFieldError(null, semSelect, 'semester');
+        if (statusSelect) Api.clearFieldError(null, statusSelect, 'status');
       }
     } catch (err) {
-      showToast('Lỗi tải hồ sơ học phí: ' + err.message, true);
+      if (err.fields) {
+        if (err.fields.student && searchInput) Api.setFieldError(null, searchInput, err.fields.student, 'student');
+        if (err.fields.semester && semSelect) Api.setFieldError(null, semSelect, err.fields.semester, 'semester');
+        if (err.fields.status && statusSelect) Api.setFieldError(null, statusSelect, err.fields.status, 'status');
+        const unhandled = Object.entries(err.fields).filter(([k]) => !['student', 'semester', 'status'].includes(k));
+        if (unhandled.length > 0) {
+          showToast(unhandled.map(([, v]) => v).join('\n'), 'error');
+        }
+      } else {
+        showToast('Lỗi tải hồ sơ học phí: ' + err.message, 'error');
+      }
     }
+  }
+
   async function refreshFeeRecord(feeRecordId) {
     if (!feeRecordId) return null;
     try {
@@ -866,10 +1361,31 @@
     const alertEl = document.getElementById('fee-duplicate-top-alert');
     if (alertEl) alertEl.style.display = 'none';
 
+    const fields = {};
+    const studentId = form.studentId.value;
+    const semesterId = form.semester.value;
+    const creditsStr = form.registeredCredits.value;
+
+    if (!studentId) {
+      fields.studentId = 'Vui lòng chọn sinh viên.';
+    }
+    if (!semesterId) {
+      fields.semester = 'Vui lòng chọn học kỳ.';
+    }
+    const creditsNum = parseInt(creditsStr, 10);
+    if (!creditsStr || isNaN(creditsNum) || creditsNum < 1 || creditsNum > 50) {
+      fields.registeredCredits = 'Số tín chỉ phải là số nguyên từ 1 đến 50.';
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
     const body = {
-      student_id: form.studentId.value,
-      semester_id: form.semester.value,
-      registered_credits: form.registeredCredits.value
+      student_id: studentId,
+      semester_id: semesterId,
+      registered_credits: creditsNum
     };
 
     try {
@@ -892,7 +1408,7 @@
       } else if (err.fields) {
         Api.renderFieldErrors(form, err.fields);
       } else {
-        showToast(err.message, true);
+        showToast(err.message, 'error');
       }
     }
   }
@@ -977,11 +1493,33 @@
 
     const feeId = form.dataset.feeId;
     const isPercent = document.getElementById('radio-exempt-percent').checked;
+    const fee = AppState.selectedFeeForExemption;
+    const gross = fee ? fee.gross_tuition : 0;
+    const fields = {};
+
+    let val = null;
+    if (isPercent) {
+      const pRes = validateClientPercentExemption(form.exemptionValue.value);
+      if (!pRes.valid) fields.exemptionValue = pRes.error;
+      else val = pRes.value;
+    } else {
+      const fRes = validateClientFixedExemption(form.exemptionValue.value, gross);
+      if (!fRes.valid) fields.exemptionValue = fRes.error;
+      else val = fRes.value;
+    }
+
+    const reasonRes = validateClientReason(form.reason.value, { required: true, fieldName: 'Lý do miễn giảm' });
+    if (!reasonRes.valid) fields.reason = reasonRes.error;
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
 
     const body = {
       type: isPercent ? 'percent' : 'fixed',
-      value: form.exemptionValue.value.trim(),
-      reason: form.reason.value.trim()
+      value: val,
+      reason: reasonRes.value
     };
 
     try {
@@ -994,7 +1532,7 @@
       await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -1091,11 +1629,44 @@
     Api.clearFieldErrors(form);
 
     const feeId = form.feeRecordId.value;
+    const amountVal = form.amount.value;
+    const paymentDateVal = form.paymentDate.value;
+    const methodVal = form.method.value;
+    const noteVal = form.note.value.trim();
+
+    const fields = {};
+    if (!feeId) {
+      fields.feeRecordId = 'Vui lòng chọn hồ sơ học phí.';
+    }
+
+    const amtRes = parseClientCurrency(amountVal);
+    if (!amtRes.valid) {
+      fields.amount = amtRes.error;
+    }
+
+    const dateRes = parseClientDate(paymentDateVal, { disallowFuture: true, fieldName: 'Ngày nộp' });
+    if (!dateRes.valid) {
+      fields.paymentDate = dateRes.error;
+    }
+
+    if (!methodVal) {
+      fields.method = 'Vui lòng chọn phương thức thanh toán.';
+    }
+
+    if (noteVal && Array.from(noteVal).length > 200) {
+      fields.note = 'Ghi chú không được vượt quá 200 ký tự.';
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
     const body = {
-      amount: form.amount.value.trim(),
-      method: form.method.value,
-      entry_date: form.paymentDate.value,
-      note: form.note.value.trim() || null,
+      amount: amtRes.value,
+      method: methodVal,
+      entry_date: dateRes.iso,
+      note: noteVal || null,
       request_id: Api.generateUUID()
     };
 
@@ -1108,13 +1679,12 @@
       await loadPaymentsData();
       await loadReportsData();
 
-      // Mở luôn biên lai in
       if (res && res.data && res.data.id) {
         openReceiptView(res.data.id);
       }
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -1158,9 +1728,28 @@
     Api.clearFieldErrors(form);
 
     const feeId = form.dataset.feeId;
+    const amountVal = form.refundAmount.value;
+    const reasonVal = form.refundReason.value;
+
+    const fields = {};
+    const amtRes = parseClientCurrency(amountVal);
+    if (!amtRes.valid) {
+      fields.refundAmount = amtRes.error;
+    }
+
+    const reasonRes = validateClientReason(reasonVal, { required: true, fieldName: 'Lý do hoàn tiền' });
+    if (!reasonRes.valid) {
+      fields.refundReason = reasonRes.error;
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
     const body = {
-      amount: form.refundAmount.value.trim(),
-      reason: form.refundReason.value.trim(),
+      amount: amtRes.value,
+      reason: reasonRes.value,
       request_id: Api.generateUUID()
     };
 
@@ -1174,7 +1763,7 @@
       await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -1194,32 +1783,56 @@
           await loadPaymentsData();
           await loadReportsData();
         } catch (err) {
-          showToast(err.message, true);
+          showToast(err.message, 'error');
         }
       }
     );
   }
 
-  async function cancelRefund(refundId, feeRecordId) {
-    showConfirm(
-      'Hủy yêu cầu hoàn tiền',
-      'Bạn có chắc chắn muốn hủy bỏ yêu cầu hoàn tiền này?',
-      async () => {
-        try {
-          const res = await Api.post(`/refunds/${refundId}/cancel`, { cancel_reason: 'Quản trị viên hủy bỏ' });
-          showToast('Đã hủy yêu cầu hoàn tiền.');
-          const fId = feeRecordId || (res && res.data && res.data.fee_record_id);
-          if (fId) {
-            await refreshFeeRecord(fId);
-          }
-          await loadFeesData();
-          await loadPaymentsData();
-          await loadReportsData();
-        } catch (err) {
-          showToast(err.message, true);
-        }
+  function openCancelRefundModal(refundId, feeRecordId) {
+    const modal = document.getElementById('modal-cancel-refund');
+    const form = document.getElementById('cancel-refund-form');
+    if (!modal || !form) return;
+    Api.clearFieldErrors(form);
+    form.reset();
+    document.getElementById('cancel-refund-id').value = refundId;
+    document.getElementById('cancel-refund-fee-id').value = feeRecordId || '';
+    const counterEl = document.getElementById('cancel-refund-char-num');
+    if (counterEl) counterEl.textContent = '0';
+    modal.showModal();
+  }
+
+  async function handleCancelRefundSubmit(e) {
+    e.preventDefault();
+    const form = document.getElementById('cancel-refund-form');
+    const btn = document.getElementById('btn-confirm-cancel-refund');
+    Api.clearFieldErrors(form);
+
+    const refundId = document.getElementById('cancel-refund-id').value;
+    const feeRecordId = document.getElementById('cancel-refund-fee-id').value;
+    const reason = document.getElementById('cancel-refund-reason').value.trim();
+
+    const reasonRes = validateClientReason(reason, { required: true, fieldName: 'Lý do hủy yêu cầu hoàn tiền' });
+    if (!reasonRes.valid) {
+      Api.renderFieldErrors(form, { cancel_reason: reasonRes.error });
+      return;
+    }
+
+    try {
+      const res = await Api.post(`/refunds/${refundId}/cancel`, { cancel_reason: reason }, btn);
+      showToast('Đã hủy yêu cầu hoàn tiền.');
+      document.getElementById('modal-cancel-refund').close();
+      const fId = feeRecordId || (res && res.data && res.data.fee_record_id);
+      if (fId) {
+        await refreshFeeRecord(fId);
       }
-    );
+      await loadFeesData();
+      await loadPaymentsData();
+      await loadReportsData();
+    } catch (err) {
+      if (err.fields) Api.renderFieldErrors(form, err.fields);
+      else showToast(err.message, 'error');
+    }
   }
 
   /* ==========================================================================
@@ -1416,9 +2029,17 @@
     e.preventDefault();
     if (!currentResolutionFee) return;
 
+    const form = document.getElementById('overpaid-form');
+    Api.clearFieldErrors(form);
+
     const isRefund = document.getElementById('radio-res-refund').checked;
     const isTransfer = document.getElementById('radio-res-transfer').checked;
     const feeId = currentResolutionFee.fee_record_id;
+
+    if (!isRefund && !isTransfer) {
+      showToast('Vui lòng chọn hình thức xử lý số tiền thừa (Hoàn tiền hoặc Chuyển tiền).', 'error');
+      return;
+    }
 
     const sourceExcess = Math.max(0, currentResolutionFee.total_paid - currentResolutionFee.net_due);
     const sourcePending = currentResolutionFee.pending_refunds_sum || 0;
@@ -1427,29 +2048,28 @@
     if (isRefund) {
       const amountInput = document.getElementById('res-refund-amount');
       const reasonInput = document.getElementById('res-refund-reason');
-      const amt = Calc.parseFormattedCurrency(amountInput.value);
-      const reason = reasonInput.value.trim();
+      const fields = {};
 
-      if (!amt || amt <= 0) {
-        showToast('Vui lòng nhập số tiền hoàn hợp lệ.', true);
-        return;
+      const amtRes = parseClientCurrency(amountInput.value);
+      if (!amtRes.valid) {
+        fields.refundAmount = amtRes.error;
+      } else if (amtRes.value > availableExcess) {
+        fields.refundAmount = `Số tiền hoàn không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`;
       }
-      if (amt > availableExcess) {
-        showToast(`Số tiền hoàn không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`, true);
-        return;
+
+      const reasonRes = validateClientReason(reasonInput.value, { required: true, fieldName: 'Lý do hoàn tiền' });
+      if (!reasonRes.valid) {
+        fields.refundReason = reasonRes.error;
       }
-      if (!reason) {
-        showToast('Vui lòng nhập lý do hoàn tiền.', true);
-        return;
-      }
-      if (reason.length > 200) {
-        showToast('Lý do hoàn tiền tối đa 200 ký tự.', true);
+
+      if (Object.keys(fields).length > 0) {
+        Api.renderFieldErrors(form, fields);
         return;
       }
 
       const body = {
-        amount: amt,
-        reason: reason,
+        amount: amtRes.value,
+        reason: reasonRes.value,
         request_id: Api.generateUUID()
       };
 
@@ -1463,7 +2083,8 @@
         await loadPaymentsData();
         await loadReportsData();
       } catch (err) {
-        showToast(err.message, true);
+        if (err.fields) Api.renderFieldErrors(form, err.fields);
+        else showToast(err.message, 'error');
       }
       return;
     }
@@ -1472,60 +2093,50 @@
       const targetSelect = document.getElementById('res-target-select');
       const amountInput = document.getElementById('res-transfer-amount');
       const reasonInput = document.getElementById('res-transfer-reason');
+      const fields = {};
 
       const targetId = parseInt(targetSelect.value, 10);
-      const amt = Calc.parseFormattedCurrency(amountInput.value);
-      const reason = reasonInput.value.trim();
-
       if (!targetId) {
-        showToast('Vui lòng chọn hồ sơ đích tiếp nhận.', true);
-        return;
+        fields.targetFeeRecordId = 'Vui lòng chọn hồ sơ đích tiếp nhận.';
       }
-      if (!amt || amt <= 0) {
-        showToast('Vui lòng nhập số tiền chuyển hợp lệ.', true);
-        return;
+
+      const amtRes = parseClientCurrency(amountInput.value);
+      if (!amtRes.valid) {
+        fields.transferAmount = amtRes.error;
       }
 
       const target = currentResolutionTargets.find(t => String(t.fee_record_id) === String(targetId));
-      if (!target) {
-        showToast('Không tìm thấy thông tin hồ sơ đích.', true);
+      if (target) {
+        if (target.outstanding <= 0) {
+          fields.targetFeeRecordId = 'Hồ sơ đích không còn số còn nợ.';
+        }
+        if (amtRes.valid && amtRes.value > availableExcess) {
+          fields.transferAmount = `Số tiền chuyển không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`;
+        } else if (amtRes.valid && amtRes.value > target.outstanding) {
+          fields.transferAmount = `Số tiền chuyển không được vượt quá số còn nợ của hồ sơ đích (${Calc.formatVND(target.outstanding)}).`;
+        }
+      }
+
+      const reasonRes = validateClientReason(reasonInput.value, { required: true, fieldName: 'Lý do chuyển tiền' });
+      if (!reasonRes.valid) {
+        fields.transferReason = reasonRes.error;
+      }
+
+      if (Object.keys(fields).length > 0) {
+        Api.renderFieldErrors(form, fields);
         return;
       }
 
-      if (target.outstanding <= 0) {
-        showToast('Hồ sơ đích không còn số còn nợ.', true);
-        return;
-      }
-
-      if (amt > availableExcess) {
-        showToast(`Số tiền chuyển không được vượt quá số dư thừa khả dụng (${Calc.formatVND(availableExcess)}).`, true);
-        return;
-      }
-
-      if (amt > target.outstanding) {
-        showToast(`Số tiền chuyển không được vượt quá số còn nợ của hồ sơ đích (${Calc.formatVND(target.outstanding)}).`, true);
-        return;
-      }
-
-      if (!reason) {
-        showToast('Vui lòng nhập lý do chuyển tiền.', true);
-        return;
-      }
-      if (reason.length > 200) {
-        showToast('Lý do chuyển tiền tối đa 200 ký tự.', true);
-        return;
-      }
-
-      const targetLabel = target.semester_label || `Hồ sơ #${targetId}`;
+      const targetLabel = target ? (target.semester_label || `Hồ sơ #${targetId}`) : `Hồ sơ #${targetId}`;
 
       showConfirm(
         'Xác nhận chuyển số tiền thừa',
-        `Bạn có chắc chắn muốn chuyển ${Calc.formatVND(amt)} từ hồ sơ [${currentResolutionFee.semester_label}] sang hồ sơ [${targetLabel}] không? Thao tác này sẽ có hiệu lực ngay và không thể hoàn tác trên giao diện.`,
+        `Bạn có chắc chắn muốn chuyển ${Calc.formatVND(amtRes.value)} từ hồ sơ [${currentResolutionFee.semester_label}] sang hồ sơ [${targetLabel}] không? Thao tác này sẽ có hiệu lực ngay và không thể hoàn tác trên giao diện.`,
         async () => {
           const body = {
             target_fee_record_id: targetId,
-            amount: amt,
-            reason: reason,
+            amount: amtRes.value,
+            reason: reasonRes.value,
             request_id: Api.generateUUID()
           };
 
@@ -1540,7 +2151,8 @@
             await loadPaymentsData();
             await loadReportsData();
           } catch (err) {
-            showToast(err.message, true);
+            if (err.fields) Api.renderFieldErrors(form, err.fields);
+            else showToast(err.message, 'error');
           }
         }
       );
@@ -1562,6 +2174,9 @@
     setElementText('reversal-orig-type', tx.type === 'payment' ? 'Thu học phí' : tx.type);
     setElementText('reversal-amount', Calc.formatVND(tx.amount));
 
+    const counterEl = document.getElementById('reversal-char-num');
+    if (counterEl) counterEl.textContent = '0';
+
     modal.showModal();
   }
 
@@ -1572,8 +2187,16 @@
     Api.clearFieldErrors(form);
 
     const entryId = form.dataset.entryId;
+    const reason = form.reversalReason.value.trim();
+
+    const reasonRes = validateClientReason(reason, { required: true, fieldName: 'Lý do đảo mục' });
+    if (!reasonRes.valid) {
+      Api.renderFieldErrors(form, { reversalReason: reasonRes.error });
+      return;
+    }
+
     const body = {
-      reason: form.reversalReason.value.trim(),
+      reason: reasonRes.value,
       request_id: Api.generateUUID()
     };
 
@@ -1590,7 +2213,7 @@
       await loadReportsData();
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
-      else showToast(err.message, true);
+      else showToast(err.message, 'error');
     }
   }
 
@@ -1667,7 +2290,7 @@
       btn.addEventListener('click', () => completeRefund(btn.dataset.id, btn.dataset.feeId));
     });
     tbody.querySelectorAll('.btn-cancel-refund-item').forEach(btn => {
-      btn.addEventListener('click', () => cancelRefund(btn.dataset.id, btn.dataset.feeId));
+      btn.addEventListener('click', () => openCancelRefundModal(btn.dataset.id, btn.dataset.feeId));
     });
   }
 
@@ -1768,21 +2391,98 @@
     if (printArea) printArea.hidden = true;
   }
 
+  async function handleReceiptLookupSubmit(e) {
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
+    const form = document.getElementById('receipt-lookup-form');
+    const input = document.getElementById('receipt-lookup-input');
+    const btn = document.getElementById('btn-lookup-receipt');
+    if (!form || !input) return;
+
+    Api.clearFieldErrors(form);
+
+    const val = input.value.trim();
+    if (!val) {
+      Api.renderFieldErrors(form, { receiptNo: 'Vui lòng nhập số biên lai hoặc mã giao dịch.' });
+      return;
+    }
+    if (Array.from(val).length > 100) {
+      Api.renderFieldErrors(form, { receiptNo: 'Mã tra cứu không được vượt quá 100 ký tự.' });
+      return;
+    }
+
+    try {
+      const res = await Api.get('/receipts/' + encodeURIComponent(val), null, btn);
+      if (res && res.ok && res.data) {
+        openReceiptView(res.data.id || val);
+      }
+    } catch (err) {
+      if (err.fields && Object.keys(err.fields).length > 0) {
+        Api.renderFieldErrors(form, err.fields);
+      } else {
+        Api.renderFieldErrors(form, { receiptNo: err.message || 'Không tìm thấy biên lai phù hợp.' });
+      }
+    }
+  }
+
   /* ==========================================================================
      11. PHÂN HỆ 6: TRA CỨU LỊCH SỬ (HISTORY SEARCH)
      ========================================================================== */
 
   async function loadHistoryData() {
-    const keyword = document.getElementById('ledger-search-keyword')?.value.trim() || '';
+    const form = document.getElementById('search-filter-form');
+    const keywordInput = document.getElementById('ledger-search-keyword');
+    const fromInput = document.getElementById('ledger-filter-from-date');
+    const toInput = document.getElementById('ledger-filter-to-date');
     const semester = document.getElementById('ledger-filter-semester')?.value || 'ALL';
-    const from = document.getElementById('ledger-filter-from-date')?.value || '';
-    const to = document.getElementById('ledger-filter-to-date')?.value || '';
     const status = document.getElementById('ledger-filter-status')?.value || 'ALL';
 
+    if (form) Api.clearFieldErrors(form);
+
+    const keyword = keywordInput?.value || '';
+    const qRes = validateClientSearchQuery(keyword, 100);
+    if (!qRes.valid) {
+      if (form) Api.renderFieldErrors(form, { q: qRes.error });
+      return;
+    }
+
+    const fromVal = fromInput?.value || '';
+    const toVal = toInput?.value || '';
+
+    let fromISO = '';
+    let toISO = '';
+
+    if (fromVal) {
+      const fromParsed = parseClientDate(fromVal, { fieldName: 'Từ ngày' });
+      if (!fromParsed.valid) {
+        if (form) Api.renderFieldErrors(form, { from: fromParsed.error });
+        return;
+      }
+      fromISO = fromParsed.iso;
+    }
+
+    if (toVal) {
+      const toParsed = parseClientDate(toVal, { fieldName: 'Đến ngày' });
+      if (!toParsed.valid) {
+        if (form) Api.renderFieldErrors(form, { to: toParsed.error });
+        return;
+      }
+      toISO = toParsed.iso;
+    }
+
+    if (fromISO && toISO) {
+      const rangeRes = validateClientDateRange(fromISO, toISO);
+      if (!rangeRes.valid) {
+        if (form) Api.renderFieldErrors(form, { to: rangeRes.error });
+        return;
+      }
+    }
+
     let url = `/history?semester=${encodeURIComponent(semester)}`;
-    if (keyword) url += `&q=${encodeURIComponent(keyword)}&name=${encodeURIComponent(keyword)}&student=${encodeURIComponent(keyword)}`;
-    if (from) url += `&from=${encodeURIComponent(from)}`;
-    if (to) url += `&to=${encodeURIComponent(to)}`;
+    if (qRes.value) url += `&q=${encodeURIComponent(qRes.value)}&name=${encodeURIComponent(qRes.value)}&student=${encodeURIComponent(qRes.value)}`;
+    if (fromISO) url += `&from=${encodeURIComponent(fromISO)}`;
+    if (toISO) url += `&to=${encodeURIComponent(toISO)}`;
     if (status !== 'ALL') url += `&status=${encodeURIComponent(status)}`;
 
     try {
@@ -1791,7 +2491,11 @@
         renderHistoryTable(res.data || []);
       }
     } catch (err) {
-      showToast('Lỗi tra cứu lịch sử: ' + err.message, true);
+      if (err.fields && form) {
+        Api.renderFieldErrors(form, err.fields);
+      } else {
+        showToast('Lỗi tra cứu lịch sử: ' + err.message, 'error');
+      }
     }
   }
 
@@ -1896,6 +2600,12 @@
     document.getElementById('btn-cancel-rate')?.addEventListener('click', () => document.getElementById('modal-rate').close());
     document.getElementById('rate-form')?.addEventListener('submit', handleRateSubmit);
 
+    // Semester modal events
+    document.getElementById('btn-open-semester-modal')?.addEventListener('click', openSemesterModal);
+    document.getElementById('btn-close-semester-modal')?.addEventListener('click', () => document.getElementById('modal-semester')?.close());
+    document.getElementById('btn-cancel-semester')?.addEventListener('click', () => document.getElementById('modal-semester')?.close());
+    document.getElementById('semester-form')?.addEventListener('submit', handleSemesterSubmit);
+
     // Fee records events
     document.getElementById('btn-open-fee-modal')?.addEventListener('click', openFeeModal);
     document.getElementById('btn-close-fee-modal')?.addEventListener('click', () => document.getElementById('modal-fee').close());
@@ -1961,6 +2671,11 @@
     document.getElementById('btn-cancel-refund')?.addEventListener('click', () => document.getElementById('modal-refund').close());
     document.getElementById('refund-form')?.addEventListener('submit', handleRefundSubmit);
 
+    // Cancel refund modal events
+    document.getElementById('btn-close-cancel-refund-modal')?.addEventListener('click', () => document.getElementById('modal-cancel-refund')?.close());
+    document.getElementById('btn-cancel-refund-dialog-close')?.addEventListener('click', () => document.getElementById('modal-cancel-refund')?.close());
+    document.getElementById('cancel-refund-form')?.addEventListener('submit', handleCancelRefundSubmit);
+
     // Reversal events
     document.getElementById('btn-close-reversal-modal')?.addEventListener('click', () => document.getElementById('modal-reversal').close());
     document.getElementById('btn-cancel-reversal')?.addEventListener('click', () => document.getElementById('modal-reversal').close());
@@ -1970,6 +2685,9 @@
     document.getElementById('btn-trigger-print')?.addEventListener('click', () => window.print());
     document.getElementById('btn-close-receipt-view')?.addEventListener('click', closeReceiptView);
     document.getElementById('btn-close-receipt-top')?.addEventListener('click', closeReceiptView);
+
+    // Receipt lookup event
+    document.getElementById('receipt-lookup-form')?.addEventListener('submit', handleReceiptLookupSubmit);
 
     // History search events
     document.getElementById('ledger-search-keyword')?.addEventListener('input', () => {
@@ -1984,12 +2702,227 @@
       document.getElementById('search-filter-form').reset();
       loadHistoryData();
     });
+    document.getElementById('search-filter-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      loadHistoryData();
+    });
+
+    // Live character counters
+    bindCharCounter(document.getElementById('exemption-reason-input'), document.getElementById('exemption-char-num'));
+    bindCharCounter(document.getElementById('refund-reason-input'), document.getElementById('refund-char-num'));
+    bindCharCounter(document.getElementById('cancel-refund-reason'), document.getElementById('cancel-refund-char-num'));
+    bindCharCounter(document.getElementById('reversal-reason-input'), document.getElementById('reversal-char-num'));
+    bindCharCounter(document.getElementById('res-refund-reason'), document.getElementById('res-refund-char-num'));
+    bindCharCounter(document.getElementById('res-transfer-reason'), document.getElementById('res-transfer-char-num'));
+
+    // Gắn xác thực inline tự động (Validate on blur, clear on input)
+    // 1. Form Đăng nhập
+    bindInlineValidation(document.getElementById('login-form'), document.getElementById('login-username'), (val) => {
+      const v = (val || '').trim();
+      if (!v) return 'Vui lòng nhập tên đăng nhập.';
+      if (Array.from(v).length > 50) return 'Tên đăng nhập không được vượt quá 50 ký tự.';
+      return null;
+    }, 'username');
+    bindInlineValidation(document.getElementById('login-form'), document.getElementById('login-password'), (val) => {
+      if (!val) return 'Vui lòng nhập mật khẩu.';
+      return null;
+    }, 'password');
+
+    // 2. Form Sinh viên
+    bindInlineValidation(document.getElementById('student-form'), document.getElementById('student-id-input'), (val) => {
+      const r = validateClientStudentCode(val);
+      return r.valid ? null : r.error;
+    }, 'student_code');
+    bindInlineValidation(document.getElementById('student-form'), document.getElementById('student-name-input'), (val) => {
+      const r = validateClientFullName(val);
+      return r.valid ? null : r.error;
+    }, 'full_name');
+    bindInlineValidation(document.getElementById('student-form'), document.getElementById('student-class-input'), (val) => {
+      const r = validateClientClassName(val);
+      return r.valid ? null : r.error;
+    }, 'class_name');
+
+    // 3. Form Học kỳ
+    bindInlineValidation(document.getElementById('semester-form'), document.getElementById('semester-term-select'), (val) => {
+      const r = validateClientSemesterTerm(val);
+      return r.valid ? null : r.error;
+    }, 'term_no');
+    bindInlineValidation(document.getElementById('semester-form'), document.getElementById('semester-year-input'), (val) => {
+      const yr = parseInt(val, 10);
+      if (!val || isNaN(yr) || yr < 2000 || yr > 2100) return 'Năm học bắt đầu phải từ 2000 đến 2100.';
+      return null;
+    }, 'academic_year_start');
+
+    // 4. Form Định mức tín chỉ
+    bindInlineValidation(document.getElementById('rate-form'), document.getElementById('rate-semester-input'), (val) => {
+      if (!val || !val.trim()) return 'Vui lòng nhập tên học kỳ.';
+      return null;
+    }, 'semester');
+    bindInlineValidation(document.getElementById('rate-form'), document.getElementById('rate-price-input'), (val) => {
+      const r = parseClientCurrency(val);
+      return r.valid ? null : r.error;
+    }, 'price_per_credit');
+
+    // 5. Form Hồ sơ học phí
+    bindInlineValidation(document.getElementById('fee-form'), document.getElementById('fee-student-select'), (val) => {
+      if (!val) return 'Vui lòng chọn sinh viên.';
+      return null;
+    }, 'student_id');
+    bindInlineValidation(document.getElementById('fee-form'), document.getElementById('fee-semester-select'), (val) => {
+      if (!val) return 'Vui lòng chọn học kỳ.';
+      return null;
+    }, 'semester');
+    bindInlineValidation(document.getElementById('fee-form'), document.getElementById('fee-credits-input'), (val) => {
+      const n = parseInt(val, 10);
+      if (!val || isNaN(n) || n < 1 || n > 50) return 'Số tín chỉ phải từ 1 đến 50.';
+      return null;
+    }, 'registered_credits');
+
+    // 6. Form Miễn giảm
+    bindInlineValidation(document.getElementById('exemption-form'), document.getElementById('exemption-value-input'), (val) => {
+      const isPct = document.getElementById('radio-exempt-percent')?.checked;
+      if (isPct) {
+        const r = validateClientPercentExemption(val);
+        return r.valid ? null : r.error;
+      } else {
+        const gross = AppState.selectedFeeForExemption?.gross_tuition || 999999999;
+        const r = validateClientFixedExemption(val, gross);
+        return r.valid ? null : r.error;
+      }
+    }, 'value');
+    bindInlineValidation(document.getElementById('exemption-form'), document.getElementById('exemption-reason-input'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do miễn giảm' });
+      return r.valid ? null : r.error;
+    }, 'reason');
+
+    // 7. Form Thu học phí
+    bindInlineValidation(document.getElementById('payment-form'), document.getElementById('payment-fee-select'), (val) => {
+      if (!val) return 'Vui lòng chọn hồ sơ học phí.';
+      return null;
+    }, 'fee_record_id');
+    bindInlineValidation(document.getElementById('payment-form'), document.getElementById('payment-amount-input'), (val) => {
+      const r = parseClientCurrency(val);
+      return r.valid ? null : r.error;
+    }, 'amount');
+    bindInlineValidation(document.getElementById('payment-form'), document.getElementById('payment-date-input'), (val) => {
+      const r = parseClientDate(val, { disallowFuture: true, fieldName: 'Ngày nộp' });
+      return r.valid ? null : r.error;
+    }, 'payment_date');
+    bindInlineValidation(document.getElementById('payment-form'), document.getElementById('payment-method-select'), (val) => {
+      if (!val) return 'Vui lòng chọn hình thức thanh toán.';
+      return null;
+    }, 'method');
+    bindInlineValidation(document.getElementById('payment-form'), document.getElementById('payment-note-input'), (val) => {
+      if (val && Array.from(val).length > 200) return 'Ghi chú không được vượt quá 200 ký tự.';
+      return null;
+    }, 'note');
+
+    // 8. Form Hoàn tiền
+    bindInlineValidation(document.getElementById('refund-form'), document.getElementById('refund-amount-input'), (val) => {
+      const r = parseClientCurrency(val);
+      return r.valid ? null : r.error;
+    }, 'refund_amount');
+    bindInlineValidation(document.getElementById('refund-form'), document.getElementById('refund-reason-input'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do hoàn tiền' });
+      return r.valid ? null : r.error;
+    }, 'refund_reason');
+
+    // 9. Form Hủy yêu cầu hoàn tiền
+    bindInlineValidation(document.getElementById('cancel-refund-form'), document.getElementById('cancel-refund-reason'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do hủy yêu cầu' });
+      return r.valid ? null : r.error;
+    }, 'cancel_reason');
+
+    // 10. Form Đảo mục
+    bindInlineValidation(document.getElementById('reversal-form'), document.getElementById('reversal-reason-input'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do đảo mục' });
+      return r.valid ? null : r.error;
+    }, 'reversal_reason');
+
+    // 11. Form Xử lý số tiền thừa
+    bindInlineValidation(document.getElementById('overpaid-form'), document.getElementById('res-refund-amount'), (val) => {
+      const r = parseClientCurrency(val);
+      return r.valid ? null : r.error;
+    }, 'refund_amount');
+    bindInlineValidation(document.getElementById('overpaid-form'), document.getElementById('res-refund-reason'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do hoàn tiền' });
+      return r.valid ? null : r.error;
+    }, 'refund_reason');
+    bindInlineValidation(document.getElementById('overpaid-form'), document.getElementById('res-target-select'), (val) => {
+      if (!val) return 'Vui lòng chọn hồ sơ đích tiếp nhận.';
+      return null;
+    }, 'target_fee_record_id');
+    bindInlineValidation(document.getElementById('overpaid-form'), document.getElementById('res-transfer-amount'), (val) => {
+      const r = parseClientCurrency(val);
+      return r.valid ? null : r.error;
+    }, 'transfer_amount');
+    bindInlineValidation(document.getElementById('overpaid-form'), document.getElementById('res-transfer-reason'), (val) => {
+      const r = validateClientReason(val, { required: true, fieldName: 'Lý do chuyển tiền' });
+      return r.valid ? null : r.error;
+    }, 'transfer_reason');
+
+    // 12. Form Tra cứu biên lai
+    bindInlineValidation(document.getElementById('receipt-lookup-form'), document.getElementById('receipt-lookup-input'), (val) => {
+      const v = (val || '').trim();
+      if (!v) return 'Vui lòng nhập số biên lai hoặc mã giao dịch.';
+      if (Array.from(v).length > 100) return 'Mã tra cứu không được vượt quá 100 ký tự.';
+      return null;
+    }, 'receipt_no');
+
+    // 13. Form Bộ lọc Tra cứu lịch sử
+    bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-search-keyword'), (val) => {
+      const r = validateClientSearchQuery(val, 100);
+      return r.valid ? null : r.error;
+    }, 'q');
+    bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-from-date'), (val) => {
+      if (!val) return null;
+      const r = parseClientDate(val, { fieldName: 'Từ ngày' });
+      return r.valid ? null : r.error;
+    }, 'from');
+    bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-to-date'), (val) => {
+      if (!val) return null;
+      const r = parseClientDate(val, { fieldName: 'Đến ngày' });
+      if (!r.valid) return r.error;
+      const fromVal = document.getElementById('ledger-filter-from-date')?.value;
+      if (fromVal) {
+        const rng = validateClientDateRange(fromVal, val);
+        if (!rng.valid) return rng.error;
+      }
+      return null;
+    }, 'to');
+
+    // 14. Bộ lọc tìm kiếm Sinh viên, Hồ sơ học phí, Sổ cái & Báo cáo
+    bindInlineValidation(null, document.getElementById('student-search-input'), (val) => {
+      const r = validateClientSearchQuery(val, 100);
+      return r.valid ? null : r.error;
+    }, 'q');
+    bindInlineValidation(null, document.getElementById('fee-search-student'), (val) => {
+      const r = validateClientSearchQuery(val, 100);
+      return r.valid ? null : r.error;
+    }, 'student');
+    bindInlineValidation(null, document.getElementById('fee-filter-semester'), () => null, 'semester');
+    bindInlineValidation(null, document.getElementById('fee-filter-status'), () => null, 'status');
+    bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-semester'), () => null, 'semester');
+    bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-status'), () => null, 'status');
+    bindInlineValidation(null, document.getElementById('report-semester-filter'), () => null, 'semester');
   }
 
   // Khởi động ứng dụng
-  document.addEventListener('DOMContentLoaded', () => {
+  function bootstrap() {
+    if (window.location.search && window.history && window.history.replaceState) {
+      const search = window.location.search;
+      if (search.includes('username=') || search.includes('password=')) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
     initEventListeners();
     checkAuthSession();
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrap);
+  } else {
+    bootstrap();
+  }
 
 })();

@@ -4,7 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hệ thống Quản lý Học phí Sinh viên</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="frontend/css/style.css" id="theme-css">
+  <script>
+    if (window.location.pathname.includes('/frontend/')) {
+      document.write('<link rel="stylesheet" href="css/style.css">');
+    }
+  </script>
 </head>
 <body>
   <!-- Thông báo lỗi lưu trữ nếu có sự cố localStorage -->
@@ -25,7 +30,8 @@
         <small class="text-muted">(Tài khoản quản trị thử nghiệm cục bộ)</small>
       </div>
 
-      <form id="login-form" novalidate>
+      <form id="login-form" method="POST" action="javascript:void(0);" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <div class="form-group">
           <label for="login-username">Tên đăng nhập <span class="required">*</span></label>
           <input 
@@ -61,9 +67,9 @@
       </form>
 
       <div class="login-footer-links" style="margin-top: 1.25rem; text-align: center; font-size: 0.875rem; border-top: 1px solid #e5e7eb; padding-top: 0.75rem;">
-        <a href="../pages/about.php" style="color: #2563eb; text-decoration: none; font-weight: 500;">ℹ️ Giới thiệu hệ thống</a>
+        <a href="pages/about.php" style="color: #2563eb; text-decoration: none; font-weight: 500;">ℹ️ Giới thiệu hệ thống</a>
         <span style="color: #9ca3af; margin: 0 0.5rem;">•</span>
-        <a href="../pages/contact.php" style="color: #2563eb; text-decoration: none; font-weight: 500;">📞 Liên hệ Phòng KHTC</a>
+        <a href="pages/contact.php" style="color: #2563eb; text-decoration: none; font-weight: 500;">📞 Liên hệ Phòng KHTC</a>
       </div>
     </div>
   </div>
@@ -81,8 +87,8 @@
       </div>
       <div class="header-user">
         <div class="header-nav-shortcuts" style="display: flex; gap: 0.5rem; align-items: center; margin-right: 0.75rem;">
-          <a href="../pages/about.php" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 0.8rem; padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.1); color: inherit; border: 1px solid currentColor; border-radius: 4px;">ℹ️ Giới thiệu</a>
-          <a href="../pages/contact.php" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 0.8rem; padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.1); color: inherit; border: 1px solid currentColor; border-radius: 4px;">📞 Liên hệ</a>
+          <a href="pages/about.php" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 0.8rem; padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.1); color: inherit; border: 1px solid currentColor; border-radius: 4px;">ℹ️ Giới thiệu</a>
+          <a href="pages/contact.php" class="btn btn-outline btn-sm" style="text-decoration: none; font-size: 0.8rem; padding: 0.25rem 0.5rem; background: rgba(255,255,255,0.1); color: inherit; border: 1px solid currentColor; border-radius: 4px;">📞 Liên hệ</a>
         </div>
         <span class="user-badge" id="current-user-display">👤 Quản trị viên: <strong>Admin</strong></span>
         <button type="button" id="btn-logout" class="btn btn-outline-danger btn-sm">Đăng xuất</button>
@@ -136,9 +142,10 @@
           </div>
           <div class="filter-group">
             <label for="report-semester-filter">Lọc theo học kỳ:</label>
-            <select id="report-semester-filter" class="form-control">
+            <select id="report-semester-filter" class="form-control" aria-describedby="report-semester-filter-error">
               <option value="ALL">-- Tất cả học kỳ --</option>
             </select>
+            <span id="report-semester-filter-error" class="error-msg" aria-live="polite"></span>
           </div>
         </div>
 
@@ -237,7 +244,8 @@
           <div class="table-actions">
             <div class="search-box">
               <label for="student-search-input" class="visually-hidden">Tìm kiếm sinh viên</label>
-              <input type="search" id="student-search-input" placeholder="Tìm theo Mã SV, Họ tên (hỗ trợ không dấu)..." class="form-control">
+              <input type="search" id="student-search-input" placeholder="Tìm theo Mã SV, Họ tên (hỗ trợ không dấu)..." class="form-control" aria-describedby="student-search-error">
+              <span id="student-search-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="record-counter"><span id="student-count-display">0</span> sinh viên</div>
           </div>
@@ -271,7 +279,10 @@
             <h2>Định mức Học phí Tín chỉ theo Học kỳ</h2>
             <p class="panel-desc">Thiết lập đơn giá mỗi tín chỉ cho từng học kỳ. Lưu ý: Khi chỉnh sửa đơn giá, các hồ sơ học phí đã lập trước đó không bị thay đổi vì đã lưu bản chụp đơn giá (rate snapshot).</p>
           </div>
-          <button type="button" id="btn-open-rate-modal" class="btn btn-primary">➕ Thêm định mức học kỳ</button>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button type="button" id="btn-open-semester-modal" class="btn btn-outline-primary">➕ Thêm học kỳ mới</button>
+            <button type="button" id="btn-open-rate-modal" class="btn btn-primary">➕ Thêm định mức học kỳ</button>
+          </div>
         </div>
 
         <div class="content-card">
@@ -307,23 +318,26 @@
           <div class="filter-bar">
             <div class="filter-item">
               <label for="fee-filter-semester">Học kỳ:</label>
-              <select id="fee-filter-semester" class="form-control">
+              <select id="fee-filter-semester" class="form-control" aria-describedby="fee-filter-semester-error">
                 <option value="ALL">-- Tất cả học kỳ --</option>
               </select>
+              <span id="fee-filter-semester-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="filter-item">
               <label for="fee-filter-status">Trạng thái:</label>
-              <select id="fee-filter-status" class="form-control">
+              <select id="fee-filter-status" class="form-control" aria-describedby="fee-filter-status-error">
                 <option value="ALL">-- Tất cả trạng thái --</option>
                 <option value="Chưa thanh toán">Chưa thanh toán</option>
                 <option value="Thanh toán một phần">Thanh toán một phần</option>
                 <option value="Đã thanh toán đủ">Đã thanh toán đủ</option>
                 <option value="OVERPAID">Thừa tiền (Đã nộp vượt mức)</option>
               </select>
+              <span id="fee-filter-status-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="filter-item flex-grow">
               <label for="fee-search-student">Tìm sinh viên:</label>
-              <input type="search" id="fee-search-student" placeholder="Nhập tên hoặc mã SV..." class="form-control">
+              <input type="search" id="fee-search-student" placeholder="Nhập tên hoặc mã SV..." class="form-control" aria-describedby="fee-search-student-error">
+              <span id="fee-search-student-error" class="error-msg" aria-live="polite"></span>
             </div>
           </div>
 
@@ -431,37 +445,66 @@
 
         <div class="content-card">
           <form id="search-filter-form" class="search-ledger-grid" novalidate>
+            <div class="form-error-summary" role="alert" hidden style="grid-column: 1 / -1;"></div>
             <div class="form-group">
               <label for="ledger-search-keyword">Từ khóa tìm kiếm:</label>
-              <input type="search" id="ledger-search-keyword" placeholder="Nhập Mã SV hoặc Họ tên (VD: nguyen van an)..." class="form-control">
+              <input type="search" id="ledger-search-keyword" placeholder="Nhập Mã SV hoặc Họ tên (VD: nguyen van an)..." class="form-control" aria-describedby="ledger-search-keyword-error">
+              <span id="ledger-search-keyword-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="form-group">
               <label for="ledger-filter-semester">Học kỳ:</label>
-              <select id="ledger-filter-semester" class="form-control">
+              <select id="ledger-filter-semester" class="form-control" aria-describedby="ledger-filter-semester-error">
                 <option value="ALL">-- Tất cả học kỳ --</option>
               </select>
+              <span id="ledger-filter-semester-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="form-group">
               <label for="ledger-filter-from-date">Từ ngày:</label>
-              <input type="date" id="ledger-filter-from-date" class="form-control">
+              <input type="date" id="ledger-filter-from-date" class="form-control" aria-describedby="ledger-filter-from-date-error">
+              <span id="ledger-filter-from-date-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="form-group">
               <label for="ledger-filter-to-date">Đến ngày:</label>
-              <input type="date" id="ledger-filter-to-date" class="form-control">
+              <input type="date" id="ledger-filter-to-date" class="form-control" aria-describedby="ledger-filter-to-date-error">
+              <span id="ledger-filter-to-date-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="form-group">
               <label for="ledger-filter-status">Trạng thái hồ sơ:</label>
-              <select id="ledger-filter-status" class="form-control">
+              <select id="ledger-filter-status" class="form-control" aria-describedby="ledger-filter-status-error">
                 <option value="ALL">-- Tất cả --</option>
                 <option value="Chưa thanh toán">Chưa thanh toán</option>
                 <option value="Thanh toán một phần">Thanh toán một phần</option>
                 <option value="Đã thanh toán đủ">Đã thanh toán đủ</option>
               </select>
+              <span id="ledger-filter-status-error" class="error-msg" aria-live="polite"></span>
             </div>
             <div class="form-group search-btn-col">
               <button type="button" id="btn-reset-search" class="btn btn-outline-secondary">Đặt lại</button>
             </div>
           </form>
+
+          <!-- Tra cứu biên lai nhanh -->
+          <div class="content-card receipt-lookup-card">
+            <h3 style="margin-bottom: 0.5rem;">Tra cứu Biên lai Thu tiền</h3>
+            <form id="receipt-lookup-form" class="receipt-lookup-form" novalidate>
+              <div class="form-error-summary" role="alert" hidden></div>
+              <div class="form-group" style="display: flex; gap: 0.75rem; align-items: flex-start; max-width: 540px; margin-bottom: 0;">
+                <div style="flex: 1;">
+                  <label for="receipt-lookup-input" class="visually-hidden">Số biên lai hoặc ID</label>
+                  <input 
+                    type="text" 
+                    id="receipt-lookup-input" 
+                    name="receiptNo" 
+                    placeholder="Nhập số biên lai (VD: PT-20260901-0001) hoặc ID..." 
+                    class="form-control"
+                    aria-describedby="receipt-lookup-error"
+                  >
+                  <span id="receipt-lookup-error" class="error-msg" aria-live="polite"></span>
+                </div>
+                <button type="submit" id="btn-lookup-receipt" class="btn btn-primary" style="white-space: nowrap;">🔍 Tra cứu biên lai</button>
+              </div>
+            </form>
+          </div>
 
           <!-- Kết quả tra cứu sổ cái -->
           <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng kết quả tra cứu lịch sử thanh toán">
@@ -500,6 +543,7 @@
         <button type="button" class="btn-close" id="btn-close-student-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="student-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <div class="form-group">
           <label for="student-id-input">Mã sinh viên <span class="required">*</span></label>
           <input 
@@ -536,12 +580,58 @@
             name="className" 
             placeholder="VD: CNTT-K24A" 
             maxlength="50"
+            aria-describedby="student-class-error"
           >
+          <span id="student-class-error" class="error-msg" aria-live="polite"></span>
         </div>
 
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="btn-cancel-student">Hủy</button>
           <button type="submit" class="btn btn-primary" id="btn-save-student">Lưu thông tin</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Modal: Thêm Học kỳ mới -->
+  <dialog id="modal-semester" aria-labelledby="modal-semester-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-semester-title">Thêm học kỳ mới</h2>
+        <button type="button" class="btn-close" id="btn-close-semester-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="semester-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
+        <div class="form-group">
+          <label for="semester-term-select">Học kỳ <span class="required">*</span></label>
+          <select id="semester-term-select" name="term_no" required aria-describedby="semester-term-error">
+            <option value="">-- Chọn học kỳ --</option>
+            <option value="1">Học kỳ 1</option>
+            <option value="2">Học kỳ 2</option>
+            <option value="3">Học kỳ hè (Học kỳ 3)</option>
+          </select>
+          <span id="semester-term-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="semester-year-input">Năm học bắt đầu <span class="required">*</span></label>
+          <input 
+            type="number" 
+            id="semester-year-input" 
+            name="academic_year_start" 
+            placeholder="VD: 2026 (từ 2000 đến 2100)" 
+            min="2000" 
+            max="2100" 
+            required 
+            aria-describedby="semester-year-error"
+          >
+          <span id="semester-year-error" class="error-msg" aria-live="polite"></span>
+          <small class="form-hint">Ví dụ: Nhập 2026 cho năm học 2026-2027</small>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-semester">Hủy</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-semester">Lưu học kỳ</button>
         </div>
       </form>
     </div>
@@ -555,6 +645,7 @@
         <button type="button" class="btn-close" id="btn-close-rate-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="rate-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="rate-edit-id">
         <div class="form-group">
           <label for="rate-semester-input">Học kỳ áp dụng <span class="required">*</span></label>
@@ -600,6 +691,7 @@
         <button type="button" class="btn-close" id="btn-close-fee-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="fee-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="fee-edit-id">
 
         <!-- Thông báo hồ sơ trùng lặp (Part 1: persistent notification, dismissible by Esc and close button) -->
@@ -648,7 +740,8 @@
 
           <div class="form-group col-half">
             <label for="fee-rate-display">Đơn giá / TC (Rate Snapshot)</label>
-            <input type="text" id="fee-rate-display" readonly class="form-control-readonly">
+            <input type="text" id="fee-rate-display" readonly class="form-control-readonly" aria-describedby="fee-rate-display-error">
+            <span id="fee-rate-display-error" class="error-msg" aria-live="polite"></span>
           </div>
         </div>
 
@@ -676,6 +769,7 @@
         <button type="button" class="btn-close" id="btn-close-exemption-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="exemption-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="exemption-fee-id">
 
         <div class="info-card">
@@ -724,7 +818,7 @@
             aria-describedby="exemption-reason-error"
           ></textarea>
           <span id="exemption-reason-error" class="error-msg" aria-live="polite"></span>
-          <div class="char-count"><span id="exemption-char-num">0</span>/200 ký tự</div>
+          <div class="char-count"><span id="exemption-char-num">0</span>/200</div>
         </div>
 
         <!-- Tính toán trực quan -->
@@ -759,6 +853,7 @@
         <button type="button" class="btn-close" id="btn-close-payment-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="payment-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <div class="form-group">
           <label for="payment-fee-select">Chọn hồ sơ học phí <span class="required">*</span></label>
           <select id="payment-fee-select" name="feeRecordId" required aria-describedby="payment-fee-error">
@@ -814,11 +909,12 @@
 
           <div class="form-group col-half">
             <label for="payment-method-select">Phương thức thanh toán <span class="required">*</span></label>
-            <select id="payment-method-select" name="method" required>
+            <select id="payment-method-select" name="method" required aria-describedby="payment-method-error">
               <option value="Chuyển khoản">Chuyển khoản</option>
               <option value="Tiền mặt">Tiền mặt</option>
               <option value="Thẻ">Thẻ</option>
             </select>
+            <span id="payment-method-error" class="error-msg" aria-live="polite"></span>
           </div>
         </div>
 
@@ -830,7 +926,9 @@
             name="note" 
             placeholder="VD: Nộp đợt 1 qua ngân hàng Vietcombank" 
             maxlength="200"
+            aria-describedby="payment-note-error"
           >
+          <span id="payment-note-error" class="error-msg" aria-live="polite"></span>
         </div>
 
         <div class="modal-footer">
@@ -849,6 +947,7 @@
         <button type="button" class="btn-close" id="btn-close-refund-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="refund-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="refund-fee-id">
 
         <div class="info-card">
@@ -885,6 +984,7 @@
             aria-describedby="refund-reason-error"
           ></textarea>
           <span id="refund-reason-error" class="error-msg" aria-live="polite"></span>
+          <div class="char-count"><span id="refund-char-num">0</span>/200</div>
         </div>
 
         <div class="modal-footer">
@@ -903,6 +1003,7 @@
         <button type="button" class="btn-close" id="btn-close-reversal-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="reversal-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="reversal-tx-id">
 
         <div class="alert-box alert-warning">
@@ -927,6 +1028,7 @@
             aria-describedby="reversal-reason-error"
           ></textarea>
           <span id="reversal-reason-error" class="error-msg" aria-live="polite"></span>
+          <div class="char-count"><span id="reversal-char-num">0</span>/200</div>
         </div>
 
         <div class="modal-footer">
@@ -945,6 +1047,7 @@
         <button type="button" class="btn-close" id="btn-close-overpaid-modal" aria-label="Đóng">&times;</button>
       </div>
       <form id="overpaid-form" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
         <input type="hidden" id="overpaid-fee-id">
 
         <!-- Thông tin hồ sơ hiện tại -->
@@ -981,13 +1084,14 @@
           <h4 style="margin-top: 0; margin-bottom: 0.75rem;">Phương án A: Hoàn tiền</h4>
           <div class="form-group">
             <label for="res-refund-amount">Số tiền hoàn (VND) <span class="required">*</span></label>
-            <input type="text" id="res-refund-amount" name="refundAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control">
+            <input type="text" id="res-refund-amount" name="refundAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control" aria-describedby="res-refund-amount-error">
             <span id="res-refund-amount-error" class="error-msg" aria-live="polite"></span>
           </div>
           <div class="form-group">
             <label for="res-refund-reason">Lý do hoàn tiền (tối đa 200 ký tự) <span class="required">*</span></label>
-            <textarea id="res-refund-reason" name="refundReason" rows="2" maxlength="200" placeholder="VD: Hoàn trả số tiền học phí nộp thừa cho sinh viên" class="form-control"></textarea>
+            <textarea id="res-refund-reason" name="refundReason" rows="2" maxlength="200" placeholder="VD: Hoàn trả số tiền học phí nộp thừa cho sinh viên" class="form-control" aria-describedby="res-refund-reason-error"></textarea>
             <span id="res-refund-reason-error" class="error-msg" aria-live="polite"></span>
+            <div class="char-count"><span id="res-refund-char-num">0</span>/200</div>
           </div>
         </div>
 
@@ -996,7 +1100,7 @@
           <h4 style="margin-top: 0; margin-bottom: 0.75rem;">Phương án B: Chuyển sang hồ sơ khác</h4>
           <div class="form-group">
             <label for="res-target-select">Chọn hồ sơ đích tiếp nhận <span class="required">*</span></label>
-            <select id="res-target-select" name="targetFeeRecordId" class="form-control">
+            <select id="res-target-select" name="targetFeeRecordId" class="form-control" aria-describedby="res-target-error">
               <option value="">-- Chọn hồ sơ học phí của sinh viên --</option>
             </select>
             <span id="res-target-error" class="error-msg" aria-live="polite"></span>
@@ -1009,13 +1113,14 @@
           </div>
           <div class="form-group">
             <label for="res-transfer-amount">Số tiền chuyển (VND) <span class="required">*</span></label>
-            <input type="text" id="res-transfer-amount" name="transferAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control">
+            <input type="text" id="res-transfer-amount" name="transferAmount" inputmode="numeric" placeholder="VD: 700.000" class="form-control" aria-describedby="res-transfer-amount-error">
             <span id="res-transfer-amount-error" class="error-msg" aria-live="polite"></span>
           </div>
           <div class="form-group">
             <label for="res-transfer-reason">Lý do chuyển (tối đa 200 ký tự) <span class="required">*</span></label>
-            <textarea id="res-transfer-reason" name="transferReason" rows="2" maxlength="200" placeholder="VD: Chuyển tiền thừa sang học phí học kỳ tiếp theo" class="form-control"></textarea>
+            <textarea id="res-transfer-reason" name="transferReason" rows="2" maxlength="200" placeholder="VD: Chuyển tiền thừa sang học phí học kỳ tiếp theo" class="form-control" aria-describedby="res-transfer-reason-error"></textarea>
             <span id="res-transfer-reason-error" class="error-msg" aria-live="polite"></span>
+            <div class="char-count"><span id="res-transfer-char-num">0</span>/200</div>
           </div>
 
           <!-- Bảng dự tính số dư sau khi chuyển (Preview resulting balances) -->
@@ -1061,6 +1166,40 @@
     </div>
   </dialog>
 
+  <!-- Modal: Hủy Yêu cầu Hoàn tiền -->
+  <dialog id="modal-cancel-refund" aria-labelledby="modal-cancel-refund-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-cancel-refund-title">Hủy Yêu cầu Hoàn tiền</h2>
+        <button type="button" class="btn-close" id="btn-close-cancel-refund-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <form id="cancel-refund-form" novalidate>
+        <input type="hidden" id="cancel-refund-id">
+        <input type="hidden" id="cancel-refund-fee-id">
+        <div class="form-error-summary" role="alert" hidden></div>
+
+        <div class="form-group">
+          <label for="cancel-refund-reason">Lý do hủy yêu cầu hoàn tiền <span class="required">*</span></label>
+          <textarea 
+            id="cancel-refund-reason" 
+            name="cancel_reason" 
+            rows="3" 
+            maxlength="200" 
+            placeholder="VD: Sinh viên rút yêu cầu hoặc nhập nhầm số tiền hoàn" 
+            required 
+            aria-describedby="cancel-refund-reason-error"
+          ></textarea>
+          <span id="cancel-refund-reason-error" class="error-msg" aria-live="polite"></span>
+          <div class="char-count"><span id="cancel-refund-char-num">0</span>/200</div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-refund-dialog-close">Hủy</button>
+          <button type="submit" class="btn btn-danger" id="btn-confirm-cancel-refund">Xác nhận Hủy yêu cầu</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
   <!-- ==================== KHU VỰC IN BIÊN LAI (PRINTABLE RECEIPT VIEW) ==================== -->
   <div id="receipt-print-area" class="receipt-print-area" hidden>
     <div class="receipt-card">
@@ -1147,10 +1286,21 @@
     </div>
   </div>
 
+  <!-- Global Toast Notification Container (Stacks up to 3 visible toasts) -->
+  <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
   <!-- Scripts -->
-  <script src="js/calc.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/app.js"></script>
-  <script src="tests/tests.js"></script>
+  <script src="frontend/js/calc.js?v=20261111_02"></script>
+  <script src="frontend/js/api.js?v=20261111_02"></script>
+  <script src="frontend/js/main.js?v=20261111_02"></script>
+  <script src="tests/tests.js?v=20261111_02"></script>
+  <script>
+    // Fallback nếu chạy trực tiếp trong thư mục frontend/
+    if (typeof window.TuitionCalculations === 'undefined') {
+      document.write('<script src="js/calc.js?v=20261111_02"><\/script>');
+      document.write('<script src="js/api.js?v=20261111_02"><\/script>');
+      document.write('<script src="js/main.js?v=20261111_02"><\/script>');
+    }
+  </script>
 </body>
 </html>

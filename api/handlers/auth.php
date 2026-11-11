@@ -22,11 +22,14 @@ function handle_auth_routes(string $method, string $path): void {
         validate_allowed_fields($input, ['username', 'password']);
 
         $username = trim((string)($input['username'] ?? ''));
+        // Password with leading or trailing spaces preserved (do not trim passwords)
         $password = (string)($input['password'] ?? '');
 
         $errors = [];
         if ($username === '') {
             $errors['username'] = 'Tên đăng nhập không được để trống.';
+        } elseif (mb_strlen($username, 'UTF-8') > 50) {
+            $errors['username'] = 'Tên đăng nhập không được vượt quá 50 ký tự.';
         }
         if ($password === '') {
             $errors['password'] = 'Mật khẩu không được để trống.';

@@ -43,7 +43,7 @@ function handle_rates_routes(string $method, string $path, array $matches): void
             $errors['semester_id'] = 'Vui lòng chọn học kỳ.';
         }
         if ($price === null || $price <= 0) {
-            $errors['price_per_credit'] = 'Đơn giá tín chỉ phải là số nguyên dương lớn hơn 0.';
+            $errors['price_per_credit'] = 'Số tiền phải là số nguyên dương.';
         }
         if (!empty($errors)) {
             json_error('Thông tin định mức học phí không hợp lệ.', 'VALIDATION_ERROR', 400, $errors);
@@ -53,14 +53,15 @@ function handle_rates_routes(string $method, string $path, array $matches): void
         $chkSem = $db->prepare("SELECT id FROM semesters WHERE id = :id");
         $chkSem->execute(['id' => $semesterId]);
         if (!$chkSem->fetch()) {
-            json_error('Học kỳ không tồn tại.', 'NOT_FOUND', 404);
+            json_error('Học kỳ không tồn tại.', 'NOT_FOUND', 404, ['semester_id' => 'Học kỳ không tồn tại.']);
         }
 
         // Kiểm tra định mức cho học kỳ đã có chưa
         $chkRate = $db->prepare("SELECT id FROM credit_rates WHERE semester_id = :semId");
         $chkRate->execute(['semId' => $semesterId]);
         if ($chkRate->fetch()) {
-            json_error('Học kỳ này đã được thiết lập định mức. Vui lòng chỉnh sửa thay vì tạo mới.', 'DUPLICATE_RATE', 409);
+            $msg = 'Học kỳ này đã được thiết lập định mức. Vui lòng chỉnh sửa thay vì tạo mới.';
+            json_error($msg, 'DUPLICATE_RATE', 400, ['semester_id' => $msg]);
         }
 
         $ins = $db->prepare("INSERT INTO credit_rates (semester_id, price_per_credit, updated_at) VALUES (:semId, :price, NOW())");
@@ -88,8 +89,8 @@ function handle_rates_routes(string $method, string $path, array $matches): void
 
         $price = parse_currency($input['price_per_credit'] ?? null);
         if ($price === null || $price <= 0) {
-            json_error('Đơn giá tín chỉ phải là số nguyên dương lớn hơn 0.', 'VALIDATION_ERROR', 400, [
-                'price_per_credit' => 'Đơn giá tín chỉ không hợp lệ.'
+            json_error('Số tiền phải là số nguyên dương.', 'VALIDATION_ERROR', 400, [
+                'price_per_credit' => 'Số tiền phải là số nguyên dương.'
             ]);
         }
 

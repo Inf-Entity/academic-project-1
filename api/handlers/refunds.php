@@ -90,10 +90,12 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
 
         $errors = [];
         if ($amount === null || $amount <= 0) {
-            $errors['amount'] = 'Số tiền yêu cầu hoàn phải là số nguyên dương hợp lệ.';
+            $errors['amount'] = 'Số tiền phải là số nguyên dương.';
         }
-        if ($reason === '' || !validate_string_length($reason, 1, 200)) {
-            $errors['reason'] = 'Lý do hoàn tiền là bắt buộc và tối đa 200 ký tự.';
+        if ($reason === '') {
+            $errors['reason'] = 'Lý do không được để trống.';
+        } elseif (mb_strlen($reason, 'UTF-8') > 200) {
+            $errors['reason'] = 'Lý do không được vượt quá 200 ký tự.';
         }
         if (!empty($errors)) {
             json_error('Dữ liệu yêu cầu hoàn tiền không hợp lệ.', 'VALIDATION_ERROR', 400, $errors);
@@ -221,9 +223,15 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
         $input = get_json_input();
         validate_allowed_fields($input, ['cancel_reason']);
 
-        $cancelReason = isset($input['cancel_reason']) ? trim((string)$input['cancel_reason']) : null;
-        if ($cancelReason !== null && !validate_string_length($cancelReason, 0, 200)) {
-            json_error('Lý do hủy tối đa 200 ký tự.', 'VALIDATION_ERROR', 400);
+        $cancelReason = isset($input['cancel_reason']) ? trim((string)$input['cancel_reason']) : '';
+        if ($cancelReason === '') {
+            json_error('Lý do không được để trống.', 'VALIDATION_ERROR', 400, [
+                'cancel_reason' => 'Lý do không được để trống.'
+            ]);
+        } elseif (mb_strlen($cancelReason, 'UTF-8') > 200) {
+            json_error('Lý do không được vượt quá 200 ký tự.', 'VALIDATION_ERROR', 400, [
+                'cancel_reason' => 'Lý do không được vượt quá 200 ký tự.'
+            ]);
         }
 
         $userId = (int)($_SESSION['user_id'] ?? 1);

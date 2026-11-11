@@ -13,13 +13,26 @@ require_once dirname(__DIR__) . '/lib/calc.php';
 function handle_receipts_routes(string $method, string $path, array $matches): void {
     require_admin();
 
-    if (preg_match('#^/api/receipts/(\d+)$#', $path, $m) && $method === 'GET') {
-        $entryId = (int)$m[1];
-        $db = get_db_connection();
+    if ($method === 'GET') {
+        $rawParam = !empty($matches[2]) ? (string)$matches[2] : (!empty($matches[1]) ? (string)$matches[1] : (string)($_GET['receipt_no'] ?? ($_GET['no'] ?? '')));
+        $lookupParam = trim(urldecode($rawParam));
 
+        if (mb_strlen($lookupParam, 'UTF-8') > 100) {
+            json_error('Mã tra cứu không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, [
+                'receipt_no' => 'Mã tra cứu không được vượt quá 100 ký tự.'
+            ]);
+        }
+
+        if ($lookupParam === '' || is_search_query_empty_or_diacritics_only($lookupParam)) {
+            json_error('Vui lòng cung cấp số biên lai hoặc mã giao dịch.', 'VALIDATION_ERROR', 400, [
+                'receipt_no' => 'Vui lòng cung cấp số biên lai.'
+            ]);
+        }
+
+        $db = get_db_connection();
         $feeSub = get_fee_summary_subquery();
-        $stmt = $db->prepare(
-            "SELECT 
+        
+        $sql = "SELECT 
                 l.id, l.fee_record_id, l.entry_type, l.amount, l.method, l.entry_date, l.receipt_no, l.note, l.created_at,
                 u.full_name AS signer_name,
                 s.student_code, s.full_name AS student_name, s.class_name,
@@ -32,13 +45,16 @@ function handle_receipts_routes(string $method, string $path, array $matches): v
              JOIN semesters sem ON fr.semester_id = sem.id
              JOIN {$feeSub} v ON fr.id = v.fee_record_id
              LEFT JOIN users u ON l.created_by = u.id
-             WHERE l.id = :id"
-        );
-        $stmt->execute(['id' => $entryId]);
+             WHERE " . (is_numeric($lookupParam) ? "l.id = :val" : "l.receipt_no = :val");
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute(['val' => $lookupParam]);
         $entry = $stmt->fetch();
 
         if (!$entry) {
-            json_error('Không tìm thấy biên lai thanh toán.', 'NOT_FOUND', 404);
+            json_error('Không tìm thấy biên lai thanh toán.', 'NOT_FOUND', 404, [
+                'receipt_no' => 'Không tìm thấy biên lai thanh toán.'
+            ]);
         }
 
         if ($entry['entry_type'] !== 'payment') {

@@ -29,6 +29,11 @@ function handle_reports_routes(string $method, string $path): void {
         $params = [];
 
         if (!empty($semesterFilter) && $semesterFilter !== 'ALL') {
+            if (!is_numeric($semesterFilter) || (int)$semesterFilter <= 0) {
+                json_error('Vui lòng chọn học kỳ hợp lệ.', 'VALIDATION_ERROR', 400, [
+                    'semester' => 'Vui lòng chọn học kỳ.'
+                ]);
+            }
             $sql .= " AND v.semester_id = :semId";
             $params['semId'] = (int)$semesterFilter;
         }

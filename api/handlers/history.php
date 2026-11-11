@@ -24,6 +24,56 @@ function handle_history_routes(string $method, string $path): void {
         $to = trim((string)($_GET['to'] ?? ''));
         $statusFilter = trim((string)($_GET['status'] ?? ($_GET['type'] ?? '')));
 
+        if (mb_strlen($q, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, ['q' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.']);
+        }
+        if (mb_strlen($student, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, ['student' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.']);
+        }
+        if (mb_strlen($name, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, ['name' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.']);
+        }
+
+        if (is_search_query_empty_or_diacritics_only($q)) {
+            $q = '';
+        }
+        if (is_search_query_empty_or_diacritics_only($student)) {
+            $student = '';
+        }
+        if (is_search_query_empty_or_diacritics_only($name)) {
+            $name = '';
+        }
+
+        $parsedFrom = null;
+        if ($from !== '') {
+            $parsedFrom = parse_and_validate_date($from);
+            if ($parsedFrom === false) {
+                json_error('Từ ngày không hợp lệ.', 'VALIDATION_ERROR', 400, ['from' => 'Từ ngày không hợp lệ.']);
+            }
+        }
+
+        $parsedTo = null;
+        if ($to !== '') {
+            $parsedTo = parse_and_validate_date($to);
+            if ($parsedTo === false) {
+                json_error('Đến ngày không hợp lệ.', 'VALIDATION_ERROR', 400, ['to' => 'Đến ngày không hợp lệ.']);
+            }
+        }
+
+        if ($parsedFrom !== null && $parsedTo !== null && $parsedTo < $parsedFrom) {
+            json_error('Đến ngày không được nhỏ hơn từ ngày.', 'VALIDATION_ERROR', 400, [
+                'to' => 'Đến ngày không được nhỏ hơn từ ngày.'
+            ]);
+        }
+
+        if ($semester !== '' && $semester !== 'ALL') {
+            if (!is_numeric($semester) || (int)$semester <= 0) {
+                json_error('Vui lòng chọn học kỳ hợp lệ.', 'VALIDATION_ERROR', 400, [
+                    'semester' => 'Vui lòng chọn học kỳ.'
+                ]);
+            }
+        }
+
         // Truy vấn danh sách giao dịch từ ledger_entries kèm subquery tổng hợp công nợ
         $feeSub = get_fee_summary_subquery();
         $sql = "SELECT 
@@ -49,7 +99,11 @@ function handle_history_routes(string $method, string $path): void {
                     CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label,
                     v.net_due,
                     v.total_paid,
-                    GREATEST(0, v.net_due - v.total_paid) AS remaining_balance
+                    GREATEST(0, v.net_due - (
+                        SUM(CASE WHEN l.entry_type IN ('payment', 'transfer_in') THEN l.amount WHEN l.entry_type IN ('reversal', 'transfer_out') THEN -l.amount ELSE 0 END) 
+                        OVER (PARTITION BY l.fee_record_id ORDER BY l.entry_date ASC, l.created_at ASC, l.id ASC)
+                        - COALESCE((SELECT SUM(rf.amount) FROM refund_requests rf WHERE rf.fee_record_id = l.fee_record_id AND rf.status = 'completed' AND rf.completed_at <= l.created_at), 0)
+                    )) AS remaining_balance
                 FROM ledger_entries l
                 JOIN fee_records fr ON l.fee_record_id = fr.id
                 JOIN students s ON fr.student_id = s.id
@@ -61,15 +115,17 @@ function handle_history_routes(string $method, string $path): void {
 
         if ($q !== '') {
             $normQ = normalize_vietnamese($q);
-            $sql .= " AND (s.student_code LIKE :q_code OR s.name_search LIKE :q_name)";
+            $sql .= " AND (s.student_code LIKE :q_code OR s.name_search LIKE :q_name OR l.receipt_no LIKE :q_rcpt)";
             $params['q_code'] = '%' . strtoupper($q) . '%';
             $params['q_name'] = '%' . $normQ . '%';
+            $params['q_rcpt'] = '%' . strtoupper($q) . '%';
         } elseif ($student !== '' && $name !== '' && $student === $name) {
             // Khi client gửi cùng chuỗi tìm kiếm cho cả student và name
             $norm = normalize_vietnamese($student);
-            $sql .= " AND (s.student_code LIKE :st_code OR s.name_search LIKE :st_name)";
+            $sql .= " AND (s.student_code LIKE :st_code OR s.name_search LIKE :st_name OR l.receipt_no LIKE :st_rcpt)";
             $params['st_code'] = '%' . strtoupper($student) . '%';
             $params['st_name'] = '%' . $norm . '%';
+            $params['st_rcpt'] = '%' . strtoupper($student) . '%';
         } else {
             if ($student !== '' && $student !== 'ALL') {
                 if (is_numeric($student)) {
@@ -93,14 +149,14 @@ function handle_history_routes(string $method, string $path): void {
             $params['sem_id'] = (int)$semester;
         }
 
-        if ($from !== '') {
+        if ($parsedFrom !== null) {
             $sql .= " AND l.entry_date >= :from_date";
-            $params['from_date'] = $from;
+            $params['from_date'] = $parsedFrom;
         }
 
-        if ($to !== '') {
+        if ($parsedTo !== null) {
             $sql .= " AND l.entry_date <= :to_date";
-            $params['to_date'] = $to;
+            $params['to_date'] = $parsedTo;
         }
 
         if ($statusFilter !== '' && $statusFilter !== 'ALL') {
