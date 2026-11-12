@@ -399,8 +399,16 @@ it("Tạo yêu cầu hoàn vượt số nộp thừa khả dụng bị từ ch�
     $overRefundRes['status'] === 422
 );
 
-// Hoàn tất yêu cầu hoàn tiền đang chờ duyệt (#1) qua API POST /api/refunds/1/complete
-$compRefundRes = $api->request('POST', '/refunds/1/complete');
+// Kiểm tra quy tắc Maker-checker: Người tạo (#1 admin) không thể tự duyệt yêu cầu của chính mình
+$selfCompRes = $api->request('POST', '/refunds/1/complete');
+it("Maker-checker: Người tạo không thể tự duyệt hoàn tiền (HTTP 403 và đúng thông báo)", 
+    $selfCompRes['status'] === 403 && str_contains($selfCompRes['body']['error']['message'] ?? '', 'Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo')
+);
+
+// Hoàn tất yêu cầu hoàn tiền đang chờ duyệt (#1) bởi cán bộ khác (staff01) qua API POST /api/refunds/1/complete
+$staffApi = new ApiTestClient();
+$staffApi->login('staff01', 'Staff@123');
+$compRefundRes = $staffApi->request('POST', '/refunds/1/complete');
 it("Duyệt hoàn tất yêu cầu hoàn tiền #1 qua API thành công (HTTP 200)", 
     $compRefundRes['status'] === 200 && ($compRefundRes['body']['data']['status'] ?? '') === 'completed'
 );
@@ -965,7 +973,7 @@ $api->request('POST', "/refunds/{$newRefundId}/cancel", ['cancel_reason' => 'D�
 // Giả lập 2 yêu cầu pending trong DB cho cùng khoản dư thừa 700k
 $concReqA = generate_uuid();
 $concReqB = generate_uuid();
-$pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (11, 700000, 'Pending A', 'pending', :r, 1, NOW())")->execute(['r' => $concReqA]);
+$pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (11, 700000, 'Pending A', 'pending', :r, 2, NOW())")->execute(['r' => $concReqA]);
 $rfIdA = (int)$pdo->lastInsertId();
 $pdo->prepare("INSERT INTO refund_requests (fee_record_id, amount, reason, status, request_id, created_by, created_at) VALUES (11, 700000, 'Pending B', 'pending', :r, 1, NOW())")->execute(['r' => $concReqB]);
 $rfIdB = (int)$pdo->lastInsertId();
@@ -1268,8 +1276,14 @@ it("Refund created via the endpoint appears in GET /api/fee-records/{id}.refunds
     $createRefRes['status'] === 201 && is_array($refundsList) && $refundFound
 );
 
-// 17.3 After refund completion, the record's status is Fully Paid and overpaid is false
-$compRes = $api->request('POST', "/refunds/{$createdRefundId}/complete");
+// 17.3 Maker-checker check: creator cannot complete refund
+$creatorCompRes = $api->request('POST', "/refunds/{$createdRefundId}/complete");
+it("Maker-checker: Người tạo không thể tự duyệt hoàn tất (HTTP 403)", 
+    $creatorCompRes['status'] === 403
+);
+
+// After refund completion by checker (staff01), the record's status is Fully Paid and overpaid is false
+$compRes = $staffApi->request('POST', "/refunds/{$createdRefundId}/complete");
 $getFeeAAfterComp = $api->request('GET', "/fee-records/{$feeRecordA}");
 $feeAData = $getFeeAAfterComp['body']['data'] ?? [];
 it("After refund completion, the record's status is Fully Paid and overpaid is false", 
@@ -1768,6 +1782,392 @@ $add101CharRes = $api->request('POST', "/students", [
 it("Tên vượt giới hạn 101 ký tự bị API từ chối với HTTP 400 và error.fields.full_name", 
     $add101CharRes['status'] === 400 && !empty($add101CharRes['body']['error']['fields']['full_name'])
 );
+
+// ----------------------------------------------------------------------------
+// 20. KIỂM THỬ NOTIFICATION BADGES & TRẠNG THÁI ĐIỀU HƯỚNG (PART 1)
+// ----------------------------------------------------------------------------
+suite_header("20. Kiểm thử Notification Badges & Trạng thái Điều hướng (Part 1)");
+
+// 20.1 GET /api/nav/badges yêu cầu quyền quản trị viên
+$unauthClient = new ApiTestClient();
+$badgeUnauthRes = $unauthClient->request('GET', '/nav/badges');
+it("API GET /api/nav/badges từ chối người dùng chưa đăng nhập với HTTP 401", 
+    $badgeUnauthRes['status'] === 401
+);
+
+// 20.2 GET /api/nav/badges trả về đầy đủ 4 khóa badge chuẩn
+$badgeRes = $api->request('GET', '/nav/badges');
+$badgeData = $badgeRes['body']['data'] ?? [];
+it("API GET /api/nav/badges trả về HTTP 200 và cấu trúc {refunds, new_transactions, pending_profiles, overpaid_profiles}", 
+    $badgeRes['status'] === 200 
+    && isset($badgeData['refunds']) 
+    && isset($badgeData['new_transactions']) 
+    && isset($badgeData['pending_profiles']) 
+    && isset($badgeData['overpaid_profiles'])
+);
+
+// 20.3 Số lượng badge khớp chính xác 100% với truy vấn trực tiếp SQL
+$sqlRefunds = (int)$pdo->query("SELECT COUNT(*) FROM refund_requests WHERE status = 'pending'")->fetchColumn();
+$lastSeenSql = (int)$pdo->query("SELECT last_seen_entry_id FROM user_nav_state WHERE user_id = 1 AND nav_key = 'history'")->fetchColumn();
+$sqlNewTx = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE id > {$lastSeenSql}")->fetchColumn();
+
+$feeSubSql = get_fee_summary_subquery();
+$sqlPendingProf = (int)$pdo->query("SELECT COUNT(*) FROM {$feeSubSql} v WHERE v.total_paid > v.net_due AND COALESCE(v.pending_refunds_count, 0) > 0")->fetchColumn();
+$sqlOverpaidProf = (int)$pdo->query("SELECT COUNT(*) FROM {$feeSubSql} v WHERE v.total_paid > v.net_due AND (v.total_paid - v.net_due) > COALESCE(v.pending_refunds_sum, 0)")->fetchColumn();
+
+it("Badge refunds khớp trực tiếp với SQL COUNT(refund_requests pending)", 
+    (int)$badgeData['refunds'] === $sqlRefunds,
+    $sqlRefunds, (int)$badgeData['refunds']
+);
+it("Badge new_transactions khớp trực tiếp với SQL COUNT(ledger_entries > last_seen)", 
+    (int)$badgeData['new_transactions'] === $sqlNewTx,
+    $sqlNewTx, (int)$badgeData['new_transactions']
+);
+it("Badge pending_profiles khớp trực tiếp với SQL COUNT hồ sơ nộp thừa có yêu cầu pending", 
+    (int)$badgeData['pending_profiles'] === $sqlPendingProf,
+    $sqlPendingProf, (int)$badgeData['pending_profiles']
+);
+it("Badge overpaid_profiles khớp trực tiếp với SQL COUNT hồ sơ nộp thừa chưa được bao phủ bởi pending", 
+    (int)$badgeData['overpaid_profiles'] === $sqlOverpaidProf,
+    $sqlOverpaidProf, (int)$badgeData['overpaid_profiles']
+);
+
+// 20.4 Baseline và Reset cho Giao dịch mới (New transactions)
+// Baseline khi đăng nhập lần đầu: seed data không hiển thị là mới (new_transactions == 0 ban đầu sau khi seen hoặc đăng nhập)
+$pdo->exec("DELETE FROM user_nav_state WHERE user_id = 2 AND nav_key = 'history'");
+$testClientNav = new ApiTestClient();
+$testClientNav->login('staff01', 'Staff@123');
+$staffBadgeRes = $testClientNav->request('GET', '/nav/badges');
+it("Baseline lần đầu đăng nhập: dữ liệu seed sẵn có không hiển thị là giao dịch mới (count = 0)", 
+    (int)($staffBadgeRes['body']['data']['new_transactions'] ?? -1) === 0
+);
+
+// Thêm một giao dịch thanh toán mới vào sổ cái (trên hồ sơ 12 chưa thanh toán)
+$sampleTxReqId = generate_uuid();
+$addTxRes = $testClientNav->request('POST', '/fee-records/12/payments', [
+    'amount'     => 100000,
+    'method'     => 'Tiền mặt',
+    'entry_date' => date('Y-m-d'),
+    'request_id' => $sampleTxReqId
+]);
+it("Tạo giao dịch nộp tiền mới thành công để kiểm thử badge (HTTP 201)", 
+    $addTxRes['status'] === 201
+);
+
+// Số giao dịch mới của admin (chưa xem lịch sử) tăng thêm 1
+$adminBadgeAfterTx = $api->request('GET', '/nav/badges');
+it("Badge new_transactions tăng lên khi có giao dịch mới phát sinh", 
+    (int)($adminBadgeAfterTx['body']['data']['new_transactions'] ?? 0) >= 1
+);
+
+// 20.5 POST /api/nav/seen kiểm tra ràng buộc & cập nhật trạng thái
+$seenNoCsrfClient = new ApiTestClient();
+$seenNoCsrfClient->login('admin', 'Admin@123');
+$seenNoCsrfClient->setCsrfToken('invalid_csrf_token');
+$seenNoCsrfRes = $seenNoCsrfClient->request('POST', '/nav/seen', [
+    'nav_key'    => 'history',
+    'request_id' => generate_uuid()
+]);
+it("POST /api/nav/seen từ chối khi CSRF Token không hợp lệ (HTTP 403)", 
+    $seenNoCsrfRes['status'] === 403
+);
+
+$seenBadReqIdRes = $api->request('POST', '/nav/seen', [
+    'nav_key'    => 'history',
+    'request_id' => 'not-a-valid-uuid'
+]);
+it("POST /api/nav/seen từ chối request_id không chuẩn UUID với HTTP 400", 
+    $seenBadReqIdRes['status'] === 400
+);
+
+$seenBadKeyRes = $api->request('POST', '/nav/seen', [
+    'nav_key'    => 'invalid_key',
+    'request_id' => generate_uuid()
+]);
+it("POST /api/nav/seen từ chối nav_key không hợp lệ với HTTP 400", 
+    $seenBadKeyRes['status'] === 400
+);
+
+$seenSuccessRes = $api->request('POST', '/nav/seen', [
+    'nav_key'    => 'history',
+    'request_id' => generate_uuid()
+]);
+it("POST /api/nav/seen ghi nhận đã xem màn hình Lịch sử thành công (HTTP 200)", 
+    $seenSuccessRes['status'] === 200 
+    && ($seenSuccessRes['body']['data']['nav_key'] ?? '') === 'history'
+    && !empty($seenSuccessRes['body']['data']['last_seen_entry_id'])
+);
+
+// Sau khi POST /nav/seen, badge new_transactions của admin quay về 0
+$adminBadgeAfterSeen = $api->request('GET', '/nav/badges');
+it("Mở màn hình Lịch sử gọi POST /api/nav/seen xóa sạch badge new_transactions (count = 0)", 
+    (int)($adminBadgeAfterSeen['body']['data']['new_transactions'] ?? -1) === 0
+);
+
+// 20.6 GET /api/nav/badges là truy vấn chỉ đọc (read-only), không làm thay đổi dữ liệu
+$navStateBefore = $pdo->query("SELECT * FROM user_nav_state ORDER BY user_id, nav_key")->fetchAll();
+$api->request('GET', '/nav/badges');
+$api->request('GET', '/nav/badges');
+$navStateAfter = $pdo->query("SELECT * FROM user_nav_state ORDER BY user_id, nav_key")->fetchAll();
+it("GET /api/nav/badges tuyệt đối không ghi dữ liệu vào database (chỉ đọc)", 
+    $navStateBefore === $navStateAfter
+);
+
+// ----------------------------------------------------------------------------
+// 21. KIỂM THỬ TRẠNG THÁI CHỜ DUYỆT (PENDING) & QUY TẮC MAKER-CHECKER (PART 2)
+// ----------------------------------------------------------------------------
+suite_header("21. Kiểm thử Trạng thái Chờ duyệt (Pending) & Quy tắc Maker-Checker (Part 2)");
+
+// 21.1 Chuỗi chuyển đổi trạng thái dẫn xuất Chờ duyệt trên từng ngưỡng biên (Boundary States)
+// Tạo sinh viên mới và hồ sơ học phí để kiểm thử trọn vòng đời
+$stBoundCode = 'SVBOUND01';
+$cleanOldFr = $pdo->query("SELECT id FROM fee_records WHERE student_id IN (SELECT id FROM students WHERE student_code = '{$stBoundCode}')")->fetchAll(PDO::FETCH_COLUMN);
+foreach ($cleanOldFr as $oldFrId) {
+    $pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM refund_requests WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM exemptions WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM fee_records WHERE id = {$oldFrId}");
+}
+$pdo->exec("DELETE FROM students WHERE student_code = '{$stBoundCode}'");
+
+$addStBoundRes = $api->request('POST', '/students', [
+    'student_code' => $stBoundCode,
+    'full_name'    => 'Nguyễn Văn Kiểm Thử Biên'
+]);
+$stBoundId = (int)($addStBoundRes['body']['data']['id'] ?? 0);
+
+// Tạo hồ sơ: 10 tín chỉ kỳ 1 (800.000) = 8.000.000
+$addFrBoundRes = $api->request('POST', '/fee-records', [
+    'student_id'         => $stBoundId,
+    'semester_id'        => 1,
+    'registered_credits' => 10
+]);
+$frBoundId = (int)($addFrBoundRes['body']['data']['id'] ?? ($addFrBoundRes['body']['data']['fee_record_id'] ?? 0));
+
+// Nộp đủ 8.000.000
+$payBoundRes = $api->request('POST', "/fee-records/{$frBoundId}/payments", [
+    'amount'     => 8000000,
+    'method'     => 'Chuyển khoản',
+    'entry_date' => date('Y-m-d'),
+    'request_id' => generate_uuid()
+]);
+
+// Thêm miễn giảm 1.000.000 sau thanh toán -> tạo trạng thái nộp thừa 1.000.000 (total_paid 8M, net_due 7M)
+$exBoundRes = $api->request('PUT', "/fee-records/{$frBoundId}/exemption", [
+    'type'   => 'fixed',
+    'value'  => 1000000,
+    'reason' => 'Miễn giảm sau nộp để kiểm thử nộp thừa'
+]);
+
+// Biên 1: Chưa có yêu cầu hoàn tiền nào -> Nộp thừa nhưng KHÔNG có trạng thái 'Chờ duyệt'
+$frCheck1 = $api->request('GET', "/fee-records/{$frBoundId}");
+$d1 = $frCheck1['body']['data'] ?? [];
+it("Biên 1 (no refund): Hồ sơ nộp thừa chưa có yêu cầu hoàn tiền -> is_pending = false", 
+    ($d1['is_overpaid'] ?? false) === true 
+    && ($d1['is_pending'] ?? true) === false 
+    && ($d1['workflow_status'] ?? null) === null
+);
+
+// Biên 2: Tạo yêu cầu hoàn tiền pending 1.000.000 do admin tạo -> Xuất hiện trạng thái 'Chờ duyệt'
+$reqBoundUuid = generate_uuid();
+$createRefBound = $api->request('POST', "/fee-records/{$frBoundId}/refunds", [
+    'amount'     => 1000000,
+    'reason'     => 'Yêu cầu hoàn tiền thử nghiệm',
+    'request_id' => $reqBoundUuid
+]);
+$rfBoundId = (int)($createRefBound['body']['data']['id'] ?? 0);
+
+$frCheck2 = $api->request('GET', "/fee-records/{$frBoundId}");
+$d2 = $frCheck2['body']['data'] ?? [];
+it("Biên 2 (pending refund): Có yêu cầu hoàn tiền pending -> is_pending = true, workflow_status = 'Pending'", 
+    ($d2['is_overpaid'] ?? false) === true 
+    && ($d2['is_pending'] ?? false) === true 
+    && ($d2['workflow_status'] ?? '') === 'Pending'
+    && ($d2['workflow_status_label'] ?? '') === 'Chờ duyệt'
+    && (int)($d2['pending_amount'] ?? 0) === 1000000
+);
+
+// Biên 3: Hủy yêu cầu hoàn tiền pending -> Trạng thái 'Chờ duyệt' biến mất ngay lập tức
+$cancelBoundRes = $api->request('POST', "/refunds/{$rfBoundId}/cancel", [
+    'cancel_reason' => 'Hủy để kiểm tra biên trạng thái'
+]);
+it("Người tạo tự hủy yêu cầu hoàn tiền pending thành công (HTTP 200)", 
+    $cancelBoundRes['status'] === 200
+);
+
+$frCheck3 = $api->request('GET', "/fee-records/{$frBoundId}");
+$d3 = $frCheck3['body']['data'] ?? [];
+it("Biên 3 (cancelled refund): Sau khi hủy yêu cầu hoàn tiền -> is_pending = false", 
+    ($d3['is_overpaid'] ?? false) === true 
+    && ($d3['is_pending'] ?? true) === false 
+    && ($d3['workflow_status'] ?? null) === null
+);
+
+// Biên 4: Tạo lại yêu cầu hoàn tiền và hoàn tất bởi checker (staff01) -> Chờ duyệt biến mất, hồ sơ hết nộp thừa
+$reqBound2Uuid = generate_uuid();
+$createRefBound2 = $api->request('POST', "/fee-records/{$frBoundId}/refunds", [
+    'amount'     => 1000000,
+    'reason'     => 'Yêu cầu hoàn tiền đợt 2',
+    'request_id' => $reqBound2Uuid
+]);
+$rfBound2Id = (int)($createRefBound2['body']['data']['id'] ?? 0);
+
+// Cán bộ staff01 duyệt hoàn tất
+$compBound2Res = $staffApi->request('POST', "/refunds/{$rfBound2Id}/complete");
+it("Cán bộ checker duyệt hoàn tất yêu cầu hoàn tiền thành công (HTTP 200)", 
+    $compBound2Res['status'] === 200
+);
+
+$frCheck4 = $api->request('GET', "/fee-records/{$frBoundId}");
+$d4 = $frCheck4['body']['data'] ?? [];
+it("Biên 4 (completed refund): Sau khi duyệt hoàn tất -> is_pending = false và không còn nộp thừa", 
+    ($d4['is_overpaid'] ?? true) === false 
+    && ($d4['is_pending'] ?? true) === false 
+    && ($d4['status'] ?? '') === 'Fully Paid'
+    && (int)($d4['total_paid'] ?? 0) === 7000000
+);
+
+// Dọn dẹp dữ liệu sinh viên kiểm thử biên (theo thứ tự bảng con trước)
+$pdo->prepare("DELETE FROM ledger_entries WHERE fee_record_id = :id")->execute(['id' => $frBoundId]);
+$pdo->prepare("DELETE FROM refund_requests WHERE fee_record_id = :id")->execute(['id' => $frBoundId]);
+$pdo->prepare("DELETE FROM exemptions WHERE fee_record_id = :id")->execute(['id' => $frBoundId]);
+$pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $frBoundId]);
+$pdo->prepare("DELETE FROM students WHERE id = :id")->execute(['id' => $stBoundId]);
+
+// 21.2 Kiểm tra sâu quy tắc Maker-checker & Ghi log lỗi ứng dụng
+// Tạo sinh viên & hồ sơ kiểm thử riêng để độc lập tuyệt đối
+$stMkCode = 'SVMKCHECK';
+$cleanOldFr = $pdo->query("SELECT id FROM fee_records WHERE student_id IN (SELECT id FROM students WHERE student_code = '{$stMkCode}')")->fetchAll(PDO::FETCH_COLUMN);
+foreach ($cleanOldFr as $oldFrId) {
+    $pdo->exec("DELETE FROM ledger_entries WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM refund_requests WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM exemptions WHERE fee_record_id = {$oldFrId}");
+    $pdo->exec("DELETE FROM fee_records WHERE id = {$oldFrId}");
+}
+$pdo->exec("DELETE FROM students WHERE student_code = '{$stMkCode}'");
+
+$addStMkRes = $api->request('POST', '/students', [
+    'student_code' => $stMkCode,
+    'full_name'    => 'Trần Kiểm Thử Maker'
+]);
+$stMkId = (int)($addStMkRes['body']['data']['id'] ?? 0);
+
+// Tạo hồ sơ: 10 tín chỉ kỳ 1 (800.000) = 8.000.000
+$addFrMkRes = $api->request('POST', '/fee-records', [
+    'student_id'         => $stMkId,
+    'semester_id'        => 1,
+    'registered_credits' => 10
+]);
+$frMkId = (int)($addFrMkRes['body']['data']['id'] ?? ($addFrMkRes['body']['data']['fee_record_id'] ?? 0));
+
+// Nộp 8.000.000
+$api->request('POST', "/fee-records/{$frMkId}/payments", [
+    'amount'     => 8000000,
+    'method'     => 'Tiền mặt',
+    'entry_date' => date('Y-m-d'),
+    'request_id' => generate_uuid()
+]);
+
+// Miễn giảm 1.000.000 -> tạo dư thừa 1.000.000 (total_paid 8M, net_due 7M)
+$api->request('PUT', "/fee-records/{$frMkId}/exemption", [
+    'type'   => 'fixed',
+    'value'  => 1000000,
+    'reason' => 'Tạo nộp thừa để kiểm thử Maker-Checker'
+]);
+
+$mkRefundUuid = generate_uuid();
+$mkCreateRes = $api->request('POST', "/fee-records/{$frMkId}/refunds", [
+    'amount'     => 700000,
+    'reason'     => 'Kiểm thử Maker-Checker Server Enforced',
+    'request_id' => $mkRefundUuid
+]);
+$mkRefundId = (int)($mkCreateRes['body']['data']['id'] ?? 0);
+
+// Admin tự duyệt yêu cầu do chính mình tạo -> phải bị 403
+$mkSelfApproveRes = $api->request('POST', "/refunds/{$mkRefundId}/complete");
+it("Maker-checker: Server từ chối người tạo tự duyệt yêu cầu hoàn tiền với HTTP 403", 
+    $mkSelfApproveRes['status'] === 403 
+    && str_contains($mkSelfApproveRes['body']['error']['message'] ?? '', 'Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo')
+);
+
+// Kiểm tra ghi log lỗi ứng dụng (logs/app_error.log)
+$logFilePath = dirname(__DIR__) . '/logs/app_error.log';
+$logContent = file_exists($logFilePath) ? file_get_contents($logFilePath) : '';
+it("Maker-checker: Hệ thống ghi nhận lần duyệt vi phạm quy tắc vào app_error.log", 
+    str_contains($logContent, 'Maker-checker violation') && str_contains($logContent, (string)$mkRefundId)
+);
+
+// Admin tự hủy yêu cầu do chính mình tạo -> hoàn toàn được phép
+$mkCancelSelfRes = $api->request('POST', "/refunds/{$mkRefundId}/cancel", [
+    'cancel_reason' => 'Admin tự hủy yêu cầu của chính mình'
+]);
+it("Maker-checker: Người tạo được phép tự hủy yêu cầu hoàn tiền đang chờ duyệt (HTTP 200)", 
+    $mkCancelSelfRes['status'] === 200
+);
+
+// 21.3 Hàng đợi duyệt hoàn tiền (Approval Queue)
+$appQueueRes = $api->request('GET', '/refunds?status=pending');
+$queueList = $appQueueRes['body']['data'] ?? [];
+$allPendingInQueue = true;
+foreach ($queueList as $qItem) {
+    if (($qItem['status'] ?? '') !== 'pending') {
+        $allPendingInQueue = false;
+        break;
+    }
+}
+it("API Hàng đợi duyệt hoàn tiền (GET /api/refunds?status=pending) chỉ trả về yêu cầu có trạng thái 'pending'", 
+    $appQueueRes['status'] === 200 && is_array($queueList) && $allPendingInQueue
+);
+
+// Kiểm tra các trường thông tin cần thiết hiển thị trên màn hình Approval Queue
+$firstQueueItem = $queueList[0] ?? null;
+it("Hàng đợi duyệt chứa đầy đủ thông tin: sinh viên, học kỳ, số tiền, lý do, người yêu cầu, ngày tạo", 
+    $firstQueueItem === null || (
+        isset($firstQueueItem['student_code'])
+        && isset($firstQueueItem['student_name'])
+        && isset($firstQueueItem['semester_label'])
+        && isset($firstQueueItem['amount'])
+        && isset($firstQueueItem['reason'])
+        && isset($firstQueueItem['created_by_name'])
+        && isset($firstQueueItem['created_at'])
+    )
+);
+
+// 21.4 Bộ lọc 'Chờ duyệt' trong danh sách hồ sơ học phí (Tuition Records Filter)
+// Tạo 1 yêu cầu pending trên hồ sơ $frMkId để test bộ lọc
+$filterPendingUuid = generate_uuid();
+$api->request('POST', "/fee-records/{$frMkId}/refunds", [
+    'amount'     => 500000,
+    'reason'     => 'Tạo pending để test bộ lọc Chờ duyệt',
+    'request_id' => $filterPendingUuid
+]);
+
+$filterPendingRes = $api->request('GET', '/fee-records?status=PENDING');
+$filterPendingRows = $filterPendingRes['body']['data'] ?? [];
+$allFilterPendingOk = count($filterPendingRows) > 0;
+foreach ($filterPendingRows as $pRow) {
+    if (!($pRow['is_pending'] ?? false)) {
+        $allFilterPendingOk = false;
+        break;
+    }
+}
+it("Bộ lọc status=PENDING trên danh sách hồ sơ chỉ trả về đúng các hồ sơ đang ở trạng thái 'Chờ duyệt'", 
+    $filterPendingRes['status'] === 200 && $allFilterPendingOk
+);
+
+$filterVnPendingRes = $api->request('GET', '/fee-records?status=' . urlencode('Chờ duyệt'));
+$filterVnRows = $filterVnPendingRes['body']['data'] ?? [];
+it("Bộ lọc status='Chờ duyệt' (tiếng Việt) hoạt động đồng nhất với status=PENDING", 
+    $filterVnPendingRes['status'] === 200 && count($filterVnRows) === count($filterPendingRows)
+);
+
+// Dọn dẹp dữ liệu sinh viên kiểm thử maker
+$pdo->prepare("DELETE FROM ledger_entries WHERE fee_record_id = :id")->execute(['id' => $frMkId]);
+$pdo->prepare("DELETE FROM refund_requests WHERE fee_record_id = :id")->execute(['id' => $frMkId]);
+$pdo->prepare("DELETE FROM exemptions WHERE fee_record_id = :id")->execute(['id' => $frMkId]);
+$pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $frMkId]);
+$pdo->prepare("DELETE FROM students WHERE id = :id")->execute(['id' => $stMkId]);
+
 
 // ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ

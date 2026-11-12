@@ -8,6 +8,7 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- Xóa các bảng theo thứ tự bảng con trước, bảng cha sau (Child-first order)
 DROP VIEW IF EXISTS `v_fee_record_summaries`;
+DROP TABLE IF EXISTS `user_nav_state`;
 DROP TABLE IF EXISTS `audit_log`;
 DROP TABLE IF EXISTS `receipt_counters`;
 DROP TABLE IF EXISTS `refund_requests`;
@@ -52,6 +53,16 @@ CREATE TABLE `users` (
     `failed_logins` INT NOT NULL DEFAULT 0,
     `locked_until` DATETIME NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3b. Bảng Trạng thái Điều hướng Người dùng (User Nav State)
+CREATE TABLE `user_nav_state` (
+    `user_id` INT NOT NULL,
+    `nav_key` VARCHAR(50) NOT NULL,
+    `last_seen_entry_id` INT NULL,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`user_id`, `nav_key`),
+    CONSTRAINT `fk_user_nav_state_users` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Bảng Định mức Tín chỉ (Credit Rates)

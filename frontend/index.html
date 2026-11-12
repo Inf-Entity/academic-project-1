@@ -115,7 +115,17 @@
         </li>
         <li role="presentation">
           <button type="button" role="tab" id="tab-fees" aria-selected="false" aria-controls="panel-fees" tabindex="-1">
-            📑 Hồ sơ Học phí
+            📑 Hồ sơ Học phí <span class="nav-badge nav-badge-warning" id="nav-badge-overpaid" aria-hidden="true" hidden></span>
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-pending" aria-selected="false" aria-controls="panel-fees" tabindex="-1">
+            ⏳ Hồ sơ chờ duyệt <span class="nav-badge nav-badge-warning" id="nav-badge-pending" aria-hidden="true" hidden></span>
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-refunds" aria-selected="false" aria-controls="panel-refunds" tabindex="-1">
+            💸 Hoàn tiền chờ duyệt <span class="nav-badge nav-badge-primary" id="nav-badge-refunds" aria-hidden="true" hidden></span>
           </button>
         </li>
         <li role="presentation">
@@ -125,7 +135,7 @@
         </li>
         <li role="presentation">
           <button type="button" role="tab" id="tab-search" aria-selected="false" aria-controls="panel-search" tabindex="-1">
-            🔍 Tra cứu Lịch sử
+            🔍 Tra cứu Lịch sử <span class="nav-badge nav-badge-info" id="nav-badge-new-tx" aria-hidden="true" hidden></span>
           </button>
         </li>
       </ul>
@@ -331,6 +341,7 @@
                 <option value="Thanh toán một phần">Thanh toán một phần</option>
                 <option value="Đã thanh toán đủ">Đã thanh toán đủ</option>
                 <option value="OVERPAID">Thừa tiền (Đã nộp vượt mức)</option>
+                <option value="PENDING">Chờ duyệt</option>
               </select>
               <span id="fee-filter-status-error" class="error-msg" aria-live="polite"></span>
             </div>
@@ -524,6 +535,42 @@
                 </tr>
               </thead>
               <tbody id="ledger-table-body">
+                <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. HOÀN TIỀN CHỜ DUYỆT (Module 8 - Approval Queue) -->
+      <section id="panel-refunds" role="tabpanel" aria-labelledby="tab-refunds" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Hoàn tiền chờ duyệt</h2>
+            <p class="panel-desc">Danh sách các yêu cầu hoàn tiền đang chờ phê duyệt. Quy tắc Maker-Checker: người tạo yêu cầu không thể tự duyệt yêu cầu của chính mình.</p>
+          </div>
+          <div class="header-actions">
+            <button type="button" id="btn-refresh-approval-queue" class="btn btn-outline btn-sm">🔄 Làm mới</button>
+          </div>
+        </div>
+
+        <div class="content-card">
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng hoàn tiền chờ duyệt">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Mã YC</th>
+                  <th scope="col">Ngày tạo</th>
+                  <th scope="col">Mã SV</th>
+                  <th scope="col">Họ và tên</th>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số tiền</th>
+                  <th scope="col">Lý do hoàn tiền</th>
+                  <th scope="col">Người yêu cầu</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="approval-queue-table-body">
                 <!-- Điền tự động bằng JavaScript -->
               </tbody>
             </table>

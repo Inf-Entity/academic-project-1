@@ -139,6 +139,20 @@ function login_user(string $username, string $password): array {
 
     log_audit((int)$user['id'], 'login_success', 'users', (string)$user['id'], ['username' => $username]);
 
+    // Thiết lập baseline cho Giao dịch mới trên lần đăng nhập đầu tiên
+    try {
+        $chkNav = $db->prepare("SELECT user_id FROM user_nav_state WHERE user_id = :uid AND nav_key = 'history'");
+        $chkNav->execute(['uid' => $user['id']]);
+        if (!$chkNav->fetch()) {
+            $maxEntryStmt = $db->query("SELECT COALESCE(MAX(id), 0) FROM ledger_entries");
+            $maxEntryId = (int)$maxEntryStmt->fetchColumn();
+            $insNav = $db->prepare("INSERT INTO user_nav_state (user_id, nav_key, last_seen_entry_id, updated_at) VALUES (:uid, 'history', :maxId, NOW())");
+            $insNav->execute(['uid' => $user['id'], 'maxId' => $maxEntryId]);
+        }
+    } catch (Throwable $e) {
+        // Không làm gián đoạn đăng nhập nếu có lỗi
+    }
+
     return [
         'id'         => (int)$user['id'],
         'username'   => $user['username'],

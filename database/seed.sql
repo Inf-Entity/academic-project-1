@@ -12,6 +12,8 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Xóa dữ liệu cũ theo thứ tự bảng con trước (Child-first order) và đặt lại AUTO_INCREMENT
+DELETE FROM `user_nav_state`;
+
 DELETE FROM `audit_log`;
 ALTER TABLE `audit_log` AUTO_INCREMENT = 1;
 

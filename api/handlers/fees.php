@@ -75,6 +75,20 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
             $params['semId'] = (int)$semesterFilter;
         }
 
+        if (!empty($statusFilter) && $statusFilter !== 'ALL') {
+            if (strcasecmp($statusFilter, 'PENDING') === 0 || strcasecmp($statusFilter, 'Chờ duyệt') === 0) {
+                $sql .= " AND (v.total_paid > v.net_due AND COALESCE(v.pending_refunds_count, 0) > 0)";
+            } elseif (strcasecmp($statusFilter, 'OVERPAID') === 0) {
+                $sql .= " AND (v.total_paid > v.net_due)";
+            } elseif (strcasecmp($statusFilter, 'Unpaid') === 0 || strcasecmp($statusFilter, 'Chưa thanh toán') === 0) {
+                $sql .= " AND (v.total_paid <= 0 AND v.net_due > 0)";
+            } elseif (strcasecmp($statusFilter, 'Partially Paid') === 0 || strcasecmp($statusFilter, 'Thanh toán một phần') === 0) {
+                $sql .= " AND (v.total_paid > 0 AND v.total_paid < v.net_due)";
+            } elseif (strcasecmp($statusFilter, 'Fully Paid') === 0 || strcasecmp($statusFilter, 'Đã thanh toán đủ') === 0) {
+                $sql .= " AND (v.total_paid >= v.net_due)";
+            }
+        }
+
         $sql .= " ORDER BY sem.academic_year_start DESC, sem.term_no DESC, s.student_code ASC";
 
         $stmt = $db->prepare($sql);
@@ -83,12 +97,19 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
 
         $results = [];
         foreach ($rows as $r) {
-            $calc = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
+            $calc = derive_payment_status(
+                (int)$r['total_paid'],
+                (int)$r['net_due'],
+                (int)($r['pending_refunds_count'] ?? 0),
+                (int)($r['pending_refunds_sum'] ?? 0)
+            );
             $merged = array_merge($r, $calc);
 
             // Filter by status if requested
             if (!empty($statusFilter) && $statusFilter !== 'ALL') {
-                if (strcasecmp($statusFilter, 'OVERPAID') === 0) {
+                if (strcasecmp($statusFilter, 'PENDING') === 0 || strcasecmp($statusFilter, 'Chờ duyệt') === 0) {
+                    if (!$calc['is_pending']) continue;
+                } elseif (strcasecmp($statusFilter, 'OVERPAID') === 0) {
                     if (!$calc['is_overpaid']) continue;
                 } elseif (strcasecmp($statusFilter, $calc['status']) !== 0 && strcasecmp($statusFilter, $calc['status_label']) !== 0) {
                     continue;
@@ -187,8 +208,7 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
 
         // Trả về dữ liệu chi tiết
         $r = fetch_fee_record_summary($db, $newId);
-        $statusInfo = derive_payment_status((int)$r['total_paid'], (int)$r['net_due']);
-        json_success(array_merge($r, $statusInfo), 201);
+        json_success(array_merge($r, ['id' => $newId]), 201);
     }
 
     // 3. PUT /api/fee-records/{id}/exemption (Upsert Exemption)
@@ -388,7 +408,12 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $rfStmt->execute(['id' => $feeRecordId]);
         $refunds = $rfStmt->fetchAll();
 
-        $calc = derive_payment_status((int)$fee['total_paid'], (int)$fee['net_due']);
+        $calc = derive_payment_status(
+            (int)$fee['total_paid'],
+            (int)$fee['net_due'],
+            (int)($fee['pending_refunds_count'] ?? 0),
+            (int)($fee['pending_refunds_sum'] ?? 0)
+        );
 
         json_success(array_merge($fee, $calc, [
             'id'              => $feeRecordId,

@@ -56,6 +56,7 @@ require_once __DIR__ . '/handlers/refunds.php';
 require_once __DIR__ . '/handlers/history.php';
 require_once __DIR__ . '/handlers/reports.php';
 require_once __DIR__ . '/handlers/receipts.php';
+require_once __DIR__ . '/handlers/nav.php';
 
 // Xác định phương thức và đường dẫn yêu cầu
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
@@ -125,6 +126,11 @@ if ($path === '/api/reports/summary') {
 
 if ($path === '/api/receipts' || preg_match('#^/api/receipts/([^/]+)$#', $path, $m)) {
     handle_receipts_routes($method, $path, $m ?? []);
+    exit;
+}
+
+if ($path === '/api/nav/badges' || $path === '/api/nav/seen') {
+    handle_nav_routes($method, $path);
     exit;
 }
 

@@ -140,6 +140,12 @@
         throw error;
       }
 
+      if (isWrite && !endpoint.includes('/nav/seen') && !endpoint.includes('/login') && !endpoint.includes('/logout')) {
+        try {
+          window.dispatchEvent(new CustomEvent('tuition:write-success', { detail: { endpoint, method } }));
+        } catch (e) {}
+      }
+
       return data;
     } catch (err) {
       clearTimeout(timeoutId);

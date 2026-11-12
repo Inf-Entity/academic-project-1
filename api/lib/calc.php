@@ -40,7 +40,7 @@ function calc_net_due(int $gross, int $exemption): int {
 /**
  * Xác định trạng thái thanh toán và thông tin nộp thừa
  */
-function derive_payment_status(int $totalPaid, int $netDue): array {
+function derive_payment_status(int $totalPaid, int $netDue, int $pendingRefundsCount = 0, int $pendingRefundsSum = 0): array {
     $p = max(0, $totalPaid);
     $n = max(0, $netDue);
 
@@ -60,14 +60,21 @@ function derive_payment_status(int $totalPaid, int $netDue): array {
         $statusLabel = 'Đã thanh toán đủ';
     }
 
+    // Chờ duyệt (Pending) là trạng thái quy trình chỉ hiển thị khi hồ sơ nộp thừa VÀ có ít nhất một yêu cầu hoàn tiền đang chờ duyệt (pending)
+    $isPending = ($isOverpaid && ($pendingRefundsCount > 0 || $pendingRefundsSum > 0));
+
     return [
-        'status'          => $status,
-        'status_label'    => $statusLabel,
-        'is_overpaid'     => $isOverpaid,
-        'overpaid_amount' => $overpaidAmount,
-        'outstanding'     => $outstanding,
-        'net_due'         => $n,
-        'total_paid'      => $p,
+        'status'                => $status,
+        'status_label'          => $statusLabel,
+        'is_overpaid'           => $isOverpaid,
+        'overpaid_amount'       => $overpaidAmount,
+        'outstanding'           => $outstanding,
+        'net_due'               => $n,
+        'total_paid'            => $p,
+        'is_pending'            => $isPending,
+        'pending_amount'        => $isPending ? $pendingRefundsSum : 0,
+        'workflow_status'       => $isPending ? 'Pending' : null,
+        'workflow_status_label' => $isPending ? 'Chờ duyệt' : null,
     ];
 }
 
@@ -178,6 +185,7 @@ function get_fee_summary_subquery(): string {
             COALESCE(r.reversals_sum, 0) AS reversals_sum,
             COALESCE(rf_comp.completed_refunds_sum, 0) AS completed_refunds_sum,
             COALESCE(rf_pend.pending_refunds_sum, 0) AS pending_refunds_sum,
+            COALESCE(rf_pend.pending_refunds_count, 0) AS pending_refunds_count,
             COALESCE(tout.transfer_out_sum, 0) AS transfer_out_sum,
             COALESCE(tin.transfer_in_sum, 0) AS transfer_in_sum,
             (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0) - COALESCE(tout.transfer_out_sum, 0) + COALESCE(tin.transfer_in_sum, 0)) AS total_paid
@@ -202,7 +210,7 @@ function get_fee_summary_subquery(): string {
             GROUP BY fee_record_id
         ) rf_comp ON fr.id = rf_comp.fee_record_id
         LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS pending_refunds_sum
+            SELECT fee_record_id, SUM(amount) AS pending_refunds_sum, COUNT(*) AS pending_refunds_count
             FROM refund_requests
             WHERE status = 'pending'
             GROUP BY fee_record_id
@@ -233,7 +241,12 @@ function fetch_fee_record_summary(PDO $pdo, int $feeRecordId): ?array {
     if (!$res) {
         return null;
     }
-    $calc = derive_payment_status((int)$res['total_paid'], (int)$res['net_due']);
+    $calc = derive_payment_status(
+        (int)$res['total_paid'],
+        (int)$res['net_due'],
+        (int)($res['pending_refunds_count'] ?? 0),
+        (int)($res['pending_refunds_sum'] ?? 0)
+    );
     return array_merge($res, $calc);
 }
 

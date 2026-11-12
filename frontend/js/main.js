@@ -496,11 +496,15 @@
       userDisplay.innerHTML = `👤 Quản trị viên: <strong>${escapeHTML(user.full_name || user.username)}</strong>`;
     }
 
+    startBadgePolling();
+
     // Nạp dữ liệu khởi tạo
     loadInitialData();
   }
 
   function onLoggedOut() {
+    stopBadgePolling();
+
     AppState.currentUser = null;
     Api.setCsrfToken(null);
 
@@ -577,8 +581,95 @@
   }
 
   /* ==========================================================================
-     3. ĐIỀU HƯỚNG TAB
+     3. ĐIỀU HƯỚNG TAB & BADGES THÔNG BÁO (PART 1 & PART 2)
      ========================================================================== */
+
+  let badgePollInterval = null;
+
+  async function updateNavBadges() {
+    if (!AppState.currentUser) return;
+    try {
+      const res = await Api.get('/nav/badges');
+      if (res && res.ok && res.data) {
+        applyBadgeCounts(res.data);
+      }
+    } catch (e) {
+      console.warn('Failed to update nav badges:', e);
+    }
+  }
+
+  function applyBadgeCounts(counts) {
+    const refunds = counts.refunds || 0;
+    const newTx = counts.new_transactions || 0;
+    const pendingProfiles = counts.pending_profiles || 0;
+    const overpaidProfiles = counts.overpaid_profiles || 0;
+
+    renderBadgeElement('nav-badge-refunds', refunds, 'tab-refunds', 'Hoàn tiền', 'mục cần xử lý');
+    renderBadgeElement('nav-badge-new-tx', newTx, 'tab-search', 'Tra cứu Lịch sử', 'giao dịch mới');
+    renderBadgeElement('nav-badge-pending', pendingProfiles, 'tab-pending', 'Hồ sơ chờ duyệt', 'mục cần xử lý');
+    renderBadgeElement('nav-badge-overpaid', overpaidProfiles, 'tab-fees', 'Hồ sơ Học phí', 'hồ sơ có số tiền thừa');
+  }
+
+  function renderBadgeElement(badgeId, count, tabBtnId, defaultName, itemUnit) {
+    const badgeEl = document.getElementById(badgeId);
+    const tabBtn = document.getElementById(tabBtnId);
+    if (!badgeEl) return;
+
+    if (count > 0) {
+      badgeEl.textContent = count > 99 ? '99+' : String(count);
+      badgeEl.hidden = false;
+      if (tabBtn) {
+        tabBtn.setAttribute('aria-label', `${defaultName}, ${count} ${itemUnit}`);
+      }
+    } else {
+      badgeEl.textContent = '';
+      badgeEl.hidden = true;
+      if (tabBtn) {
+        tabBtn.removeAttribute('aria-label');
+      }
+    }
+  }
+
+  function startBadgePolling() {
+    stopBadgePolling();
+    updateNavBadges();
+    badgePollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && AppState.currentUser) {
+        updateNavBadges();
+      }
+    }, 60000);
+  }
+
+  function stopBadgePolling() {
+    if (badgePollInterval) {
+      clearInterval(badgePollInterval);
+      badgePollInterval = null;
+    }
+    ['nav-badge-refunds', 'nav-badge-new-tx', 'nav-badge-pending', 'nav-badge-overpaid'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.textContent = '';
+        el.hidden = true;
+      }
+    });
+    ['tab-refunds', 'tab-search', 'tab-pending', 'tab-fees'].forEach(id => {
+      const tabBtn = document.getElementById(id);
+      if (tabBtn) {
+        tabBtn.removeAttribute('aria-label');
+      }
+    });
+  }
+
+  async function markHistoryAsSeen() {
+    if (!AppState.currentUser) return;
+    try {
+      const requestId = Api.generateUUID();
+      await Api.post('/nav/seen', { nav_key: 'history', request_id: requestId });
+      await updateNavBadges();
+    } catch (e) {
+      console.warn('Failed to mark history as seen:', e);
+    }
+  }
 
   function switchTab(tabName) {
     AppState.currentTab = tabName;
@@ -594,7 +685,8 @@
     // Cập nhật panels
     const panels = document.querySelectorAll('.tab-panel');
     panels.forEach(panel => {
-      const isActive = panel.id === `panel-${tabName}`;
+      const targetPanelId = (tabName === 'pending') ? 'panel-fees' : `panel-${tabName}`;
+      const isActive = panel.id === targetPanelId;
       panel.hidden = !isActive;
       panel.classList.toggle('active', isActive);
     });
@@ -603,9 +695,26 @@
     if (tabName === 'reports') loadReportsData();
     else if (tabName === 'students') loadStudentsData();
     else if (tabName === 'rates') loadRatesData();
-    else if (tabName === 'fees') loadFeesData();
+    else if (tabName === 'fees') {
+      const statusSelect = document.getElementById('fee-filter-status');
+      if (statusSelect && statusSelect.value === 'PENDING') {
+        statusSelect.value = 'ALL';
+      }
+      loadFeesData();
+    }
+    else if (tabName === 'pending') {
+      const statusSelect = document.getElementById('fee-filter-status');
+      if (statusSelect) {
+        statusSelect.value = 'PENDING';
+      }
+      loadFeesData();
+    }
+    else if (tabName === 'refunds') loadApprovalQueue();
     else if (tabName === 'payments') loadPaymentsData();
-    else if (tabName === 'search') loadHistoryData();
+    else if (tabName === 'search') {
+      loadHistoryData();
+      markHistoryAsSeen();
+    }
   }
 
   /* ==========================================================================
@@ -617,7 +726,9 @@
       loadSemestersList(),
       loadRatesData(),
       loadStudentsData(),
-      loadPaymentsData()
+      loadPaymentsData(),
+      loadApprovalQueue(),
+      updateNavBadges()
     ]);
     switchTab(AppState.currentTab || 'reports');
   }
@@ -1216,6 +1327,22 @@
         badgeClass = 'status-badge status-paid badge badge-success';
       }
 
+      const pendingBadge = r.is_pending ? `<br><span class="badge badge-pending">⏳ Chờ duyệt</span>` : '';
+      const overpaidWarning = r.is_overpaid ? `<br><small class="text-danger font-weight-bold">Thừa: ${Calc.formatVND(r.overpaid_amount)}</small>` : '';
+
+      let excessActionHtml = '';
+      if (r.is_pending) {
+        excessActionHtml = `
+          <div class="pending-refund-action">
+            <span class="text-warning-dark font-weight-bold">Đang chờ duyệt hoàn tiền: ${Calc.formatVND(r.pending_amount || r.pending_refunds_sum || 0)}</span>
+            <br>
+            <a href="javascript:void(0);" class="btn-link link-view-refund" data-id="${r.fee_record_id}">Xem yêu cầu</a>
+          </div>
+        `;
+      } else if (r.is_overpaid && (r.overpaid_amount - (r.pending_refunds_sum || 0) > 0)) {
+        excessActionHtml = `<button type="button" class="btn btn-sm btn-outline-warning btn-resolve-excess" data-id="${r.fee_record_id}">⚖️ Xử lý số tiền thừa</button>`;
+      }
+
       return `
         <tr>
           <td><strong>${escapeHTML(r.student_code)}</strong></td>
@@ -1230,12 +1357,13 @@
           <td class="text-right text-danger">${Calc.formatVND(r.outstanding)}</td>
           <td>
             <span class="${badgeClass}">${r.is_overpaid ? '⚠️ ' : ''}${escapeHTML(r.status_label)}</span>
-            ${r.is_overpaid ? `<br><small class="text-danger font-weight-bold">Thừa: ${Calc.formatVND(r.overpaid_amount)}</small>` : ''}
+            ${overpaidWarning}
+            ${pendingBadge}
           </td>
           <td class="text-center table-actions-cell">
             <button type="button" class="btn btn-sm btn-outline-info btn-exempt-fee" data-id="${r.fee_record_id}">🎁 Miễn giảm</button>
             <button type="button" class="btn btn-sm btn-outline-success btn-pay-fee" data-id="${r.fee_record_id}">💳 Thu tiền</button>
-            ${(r.is_overpaid && (r.overpaid_amount - (r.pending_refunds_sum || 0) > 0)) ? `<button type="button" class="btn btn-sm btn-outline-warning btn-resolve-excess" data-id="${r.fee_record_id}">⚖️ Xử lý số tiền thừa</button>` : ''}
+            ${excessActionHtml}
           </td>
         </tr>
       `;
@@ -1252,6 +1380,9 @@
     });
     tbody.querySelectorAll('.btn-resolve-excess').forEach(btn => {
       btn.addEventListener('click', () => openOverpaidResolutionModal(btn.dataset.id));
+    });
+    tbody.querySelectorAll('.link-view-refund').forEach(link => {
+      link.addEventListener('click', () => switchTab('refunds'));
     });
   }
 
@@ -1758,9 +1889,13 @@
       showToast('Tạo yêu cầu hoàn tiền thành công.');
       document.getElementById('modal-refund').close();
       await refreshFeeRecord(feeId);
-      await loadFeesData();
-      await loadPaymentsData();
-      await loadReportsData();
+      await Promise.all([
+        loadFeesData(),
+        loadPaymentsData(),
+        loadApprovalQueue(),
+        loadReportsData(),
+        updateNavBadges()
+      ]);
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
       else showToast(err.message, 'error');
@@ -1779,9 +1914,13 @@
           if (fId) {
             await refreshFeeRecord(fId);
           }
-          await loadFeesData();
-          await loadPaymentsData();
-          await loadReportsData();
+          await Promise.all([
+            loadFeesData(),
+            loadPaymentsData(),
+            loadApprovalQueue(),
+            loadReportsData(),
+            updateNavBadges()
+          ]);
         } catch (err) {
           showToast(err.message, 'error');
         }
@@ -1826,9 +1965,13 @@
       if (fId) {
         await refreshFeeRecord(fId);
       }
-      await loadFeesData();
-      await loadPaymentsData();
-      await loadReportsData();
+      await Promise.all([
+        loadFeesData(),
+        loadPaymentsData(),
+        loadApprovalQueue(),
+        loadReportsData(),
+        updateNavBadges()
+      ]);
     } catch (err) {
       if (err.fields) Api.renderFieldErrors(form, err.fields);
       else showToast(err.message, 'error');
@@ -2079,9 +2222,13 @@
         showToast('Đã tạo yêu cầu hoàn tiền thành công.');
         document.getElementById('modal-overpaid-resolution').close();
         await refreshFeeRecord(feeId);
-        await loadFeesData();
-        await loadPaymentsData();
-        await loadReportsData();
+        await Promise.all([
+          loadFeesData(),
+          loadPaymentsData(),
+          loadApprovalQueue(),
+          loadReportsData(),
+          updateNavBadges()
+        ]);
       } catch (err) {
         if (err.fields) Api.renderFieldErrors(form, err.fields);
         else showToast(err.message, 'error');
@@ -2147,9 +2294,13 @@
             document.getElementById('modal-overpaid-resolution').close();
             await refreshFeeRecord(feeId);
             await refreshFeeRecord(targetId);
-            await loadFeesData();
-            await loadPaymentsData();
-            await loadReportsData();
+            await Promise.all([
+              loadFeesData(),
+              loadPaymentsData(),
+              loadApprovalQueue(),
+              loadReportsData(),
+              updateNavBadges()
+            ]);
           } catch (err) {
             if (err.fields) Api.renderFieldErrors(form, err.fields);
             else showToast(err.message, 'error');
@@ -2251,6 +2402,8 @@
       return;
     }
 
+    const currentUserId = AppState.currentUser ? AppState.currentUser.id : null;
+
     tbody.innerHTML = refunds.map(r => {
       let statusBadge = 'badge-secondary';
       let statusLabel = r.status;
@@ -2265,11 +2418,27 @@
         statusLabel = 'Đã hủy';
       }
 
+      const isCreator = (Number(r.created_by) === Number(currentUserId));
       const canAction = (r.status === 'pending');
-      const actionContent = canAction ? `
-        <button type="button" class="btn btn-sm btn-outline-success btn-complete-refund" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✓ Duyệt</button>
-        <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
-      ` : (r.status === 'completed' ? `<small class="text-success font-weight-bold">Đã duyệt (${escapeHTML(r.completed_by_name || 'Admin')})</small>` : `<small class="text-muted">Đã hủy${r.cancel_reason ? ': ' + escapeHTML(r.cancel_reason) : ''}</small>`);
+      let actionContent = '-';
+      if (canAction) {
+        actionContent = isCreator ? `
+          <div class="action-cell-content">
+            <button type="button" class="btn btn-sm btn-outline-success" disabled>✓ Duyệt</button>
+            <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
+            <div class="maker-note">Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo.</div>
+          </div>
+        ` : `
+          <div class="action-cell-content">
+            <button type="button" class="btn btn-sm btn-outline-success btn-complete-refund" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✓ Duyệt</button>
+            <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
+          </div>
+        `;
+      } else if (r.status === 'completed') {
+        actionContent = `<small class="text-success font-weight-bold">Đã duyệt (${escapeHTML(r.completed_by_name || 'Admin')})</small>`;
+      } else if (r.status === 'cancelled') {
+        actionContent = `<small class="text-muted">Đã hủy${r.cancel_reason ? ': ' + escapeHTML(r.cancel_reason) : ''}</small>`;
+      }
 
       return `
         <tr>
@@ -2282,6 +2451,70 @@
           <td>${escapeHTML(r.reason || '-')}</td>
           <td><span class="badge ${statusBadge}">${statusLabel}</span></td>
           <td class="text-center">${actionContent}</td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.btn-complete-refund').forEach(btn => {
+      btn.addEventListener('click', () => completeRefund(btn.dataset.id, btn.dataset.feeId));
+    });
+    tbody.querySelectorAll('.btn-cancel-refund-item').forEach(btn => {
+      btn.addEventListener('click', () => openCancelRefundModal(btn.dataset.id, btn.dataset.feeId));
+    });
+  }
+
+  /* ==========================================================================
+     HÀNG ĐỢI DUYỆT HOÀN TIỀN (APPROVAL QUEUE - PART 2)
+     ========================================================================== */
+
+  async function loadApprovalQueue() {
+    try {
+      const res = await Api.get('/refunds?status=pending');
+      if (res && res.ok) {
+        renderApprovalQueue(res.data || []);
+      }
+    } catch (err) {
+      showToast('Lỗi tải danh sách hoàn tiền chờ duyệt: ' + err.message, 'error');
+    }
+  }
+
+  function renderApprovalQueue(refunds) {
+    const tbody = document.getElementById('approval-queue-table-body');
+    if (!tbody) return;
+
+    if (!refunds || refunds.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Không có yêu cầu hoàn tiền nào đang chờ duyệt.</td></tr>';
+      return;
+    }
+
+    const currentUserId = AppState.currentUser ? AppState.currentUser.id : null;
+
+    tbody.innerHTML = refunds.map(r => {
+      const isCreator = (Number(r.created_by) === Number(currentUserId));
+      const actionHtml = isCreator ? `
+        <div class="action-cell-content">
+          <button type="button" class="btn btn-sm btn-outline-success" disabled>✓ Duyệt</button>
+          <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
+          <div class="maker-note">Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo.</div>
+        </div>
+      ` : `
+        <div class="action-cell-content">
+          <button type="button" class="btn btn-sm btn-outline-success btn-complete-refund" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✓ Duyệt</button>
+          <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
+        </div>
+      `;
+
+      return `
+        <tr>
+          <td><strong>YC-${String(r.id).padStart(4, '0')}</strong></td>
+          <td>${Calc.formatDateVN(r.created_at)}</td>
+          <td>${escapeHTML(r.student_code || '-')}</td>
+          <td>${escapeHTML(r.student_name || r.full_name || '-')}</td>
+          <td>${escapeHTML(r.semester_label || '-')}</td>
+          <td class="text-right text-danger"><strong>${Calc.formatVND(r.amount)}</strong></td>
+          <td>${escapeHTML(r.reason || '-')}</td>
+          <td>${escapeHTML(r.created_by_name || 'Admin')}</td>
+          <td class="text-center">${actionHtml}</td>
         </tr>
       `;
     }).join('');
@@ -2705,6 +2938,21 @@
     document.getElementById('search-filter-form')?.addEventListener('submit', (e) => {
       e.preventDefault();
       loadHistoryData();
+    });
+
+    // Approval queue refresh
+    document.getElementById('btn-refresh-approval-queue')?.addEventListener('click', loadApprovalQueue);
+
+    // Listen for write success to auto-refresh badges
+    window.addEventListener('tuition:write-success', () => {
+      updateNavBadges();
+    });
+
+    // Refresh badges when tab becomes visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && AppState.currentUser) {
+        updateNavBadges();
+      }
     });
 
     // Live character counters

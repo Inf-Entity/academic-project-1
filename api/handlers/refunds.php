@@ -182,6 +182,17 @@ function handle_refunds_routes(string $method, string $path, array $matches): vo
                 json_error("Chỉ yêu cầu đang ở trạng thái 'pending' mới có thể hoàn tất (Trạng thái hiện tại: '{$refund['status']}').", 'INVALID_STATUS', 409);
             }
 
+            // Maker-checker rule: Người tạo yêu cầu không thể tự duyệt hoàn tất
+            if ((int)$refund['created_by'] === $userId) {
+                error_log(sprintf(
+                    "[%s] Maker-checker violation: User ID %d attempted to complete self-created refund request #%d",
+                    date('Y-m-d H:i:s'),
+                    $userId,
+                    $refundId
+                ));
+                json_error('Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo.', 'MAKER_CHECKER_VIOLATION', 403);
+            }
+
             $feeRecordId = (int)$refund['fee_record_id'];
             $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE")->execute(['id' => $feeRecordId]);
 
