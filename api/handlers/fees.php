@@ -76,16 +76,17 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         }
 
         if (!empty($statusFilter) && $statusFilter !== 'ALL') {
-            if (strcasecmp($statusFilter, 'PENDING') === 0 || strcasecmp($statusFilter, 'Chờ duyệt') === 0) {
+            $sfLower = mb_strtolower(trim((string)$statusFilter), 'UTF-8');
+            if ($sfLower === 'pending' || $sfLower === 'chờ duyệt') {
                 $sql .= " AND (v.total_paid > v.net_due AND COALESCE(v.pending_refunds_count, 0) > 0)";
-            } elseif (strcasecmp($statusFilter, 'OVERPAID') === 0) {
-                $sql .= " AND (v.total_paid > v.net_due)";
-            } elseif (strcasecmp($statusFilter, 'Unpaid') === 0 || strcasecmp($statusFilter, 'Chưa thanh toán') === 0) {
-                $sql .= " AND (v.total_paid <= 0 AND v.net_due > 0)";
-            } elseif (strcasecmp($statusFilter, 'Partially Paid') === 0 || strcasecmp($statusFilter, 'Thanh toán một phần') === 0) {
-                $sql .= " AND (v.total_paid > 0 AND v.total_paid < v.net_due)";
-            } elseif (strcasecmp($statusFilter, 'Fully Paid') === 0 || strcasecmp($statusFilter, 'Đã thanh toán đủ') === 0) {
-                $sql .= " AND (v.total_paid >= v.net_due)";
+            } elseif ($sfLower === 'overpaid' || $sfLower === 'nộp thừa') {
+                $sql .= " AND v.derived_status = 'Overpaid'";
+            } elseif ($sfLower === 'unpaid' || $sfLower === 'chưa thanh toán') {
+                $sql .= " AND v.derived_status = 'Unpaid'";
+            } elseif ($sfLower === 'partially paid' || $sfLower === 'thanh toán một phần' || $sfLower === 'partial') {
+                $sql .= " AND v.derived_status = 'Partially Paid'";
+            } elseif ($sfLower === 'fully paid' || $sfLower === 'đã thanh toán đủ' || $sfLower === 'paid') {
+                $sql .= " AND v.derived_status = 'Fully Paid'";
             }
         }
 
@@ -107,12 +108,17 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
 
             // Filter by status if requested
             if (!empty($statusFilter) && $statusFilter !== 'ALL') {
-                if (strcasecmp($statusFilter, 'PENDING') === 0 || strcasecmp($statusFilter, 'Chờ duyệt') === 0) {
+                $sf = mb_strtolower(trim((string)$statusFilter), 'UTF-8');
+                if ($sf === 'pending' || $sf === 'chờ duyệt') {
                     if (!$calc['is_pending']) continue;
-                } elseif (strcasecmp($statusFilter, 'OVERPAID') === 0) {
+                } elseif ($sf === 'overpaid' || $sf === 'nộp thừa') {
                     if (!$calc['is_overpaid']) continue;
-                } elseif (strcasecmp($statusFilter, $calc['status']) !== 0 && strcasecmp($statusFilter, $calc['status_label']) !== 0) {
-                    continue;
+                } else {
+                    $stLower = mb_strtolower($calc['status'], 'UTF-8');
+                    $stLblLower = mb_strtolower($calc['status_label'], 'UTF-8');
+                    if ($sf !== $stLower && $sf !== $stLblLower) {
+                        continue;
+                    }
                 }
             }
             $results[] = $merged;

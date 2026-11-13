@@ -26,15 +26,84 @@ function handle_students_routes(string $method, string $path, array $matches): v
             ]);
         }
 
+        $feeSub = get_fee_summary_subquery();
+
+        // Thống kê toàn hệ thống xuyên suốt (System-wide student financial KPI metrics)
+        $statsStmt = $db->query("
+            SELECT 
+                COUNT(*) AS total_students_count,
+                COUNT(CASE WHEN fee_records_count > 0 THEN 1 END) AS with_records_count,
+                COUNT(CASE WHEN payment_status = 'Đã thanh toán đủ' THEN 1 END) AS fully_paid_count,
+                COUNT(CASE WHEN total_outstanding > 0 THEN 1 END) AS outstanding_count,
+                COUNT(CASE WHEN total_overpaid > 0 THEN 1 END) AS overpaid_count
+            FROM (
+                SELECT 
+                    s.id,
+                    COUNT(v.fee_record_id) AS fee_records_count,
+                    COALESCE(SUM(v.outstanding_amount), 0) AS total_outstanding,
+                    COALESCE(SUM(v.overpaid_amount), 0) AS total_overpaid,
+                    CASE 
+                        WHEN COUNT(v.fee_record_id) = 0 THEN 'Chưa có hồ sơ'
+                        WHEN SUM(v.outstanding_amount) = 0 THEN 'Đã thanh toán đủ'
+                        WHEN SUM(v.total_paid) = 0 AND SUM(v.net_due) > 0 THEN 'Chưa thanh toán'
+                        ELSE 'Thanh toán một phần'
+                    END AS payment_status
+                FROM students s
+                LEFT JOIN {$feeSub} v ON s.id = v.student_id
+                GROUP BY s.id
+            ) t
+        ");
+        $stats = $statsStmt->fetch() ?: [
+            'total_students_count' => 0,
+            'with_records_count'   => 0,
+            'fully_paid_count'     => 0,
+            'outstanding_count'    => 0,
+            'overpaid_count'       => 0,
+        ];
+        $totalStudentsCount = (int)$stats['total_students_count'];
+        $withRecordsCount   = (int)$stats['with_records_count'];
+        $fullyPaidCount     = (int)$stats['fully_paid_count'];
+        $outstandingCount   = (int)$stats['outstanding_count'];
+        $overpaidCount      = (int)$stats['overpaid_count'];
+
+        $selectFields = "
+            s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at,
+            CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END AS has_account,
+            u.username AS account_username,
+            COUNT(v.fee_record_id) AS fee_records_count,
+            COALESCE(SUM(v.net_due), 0) AS total_net_due,
+            COALESCE(SUM(v.total_paid), 0) AS total_paid,
+            COALESCE(SUM(v.completed_refunds_sum), 0) AS total_refunded,
+            COALESCE(SUM(v.outstanding_amount), 0) AS total_outstanding,
+            COALESCE(SUM(v.overpaid_amount), 0) AS total_overpaid,
+            CASE 
+                WHEN COUNT(v.fee_record_id) = 0 THEN 'Chưa có hồ sơ'
+                WHEN SUM(v.outstanding_amount) = 0 THEN 'Đã thanh toán đủ'
+                WHEN SUM(v.total_paid) = 0 AND SUM(v.net_due) > 0 THEN 'Chưa thanh toán'
+                ELSE 'Thanh toán một phần'
+            END AS payment_status,
+            CASE 
+                WHEN COUNT(v.fee_record_id) = 0 THEN 'Chưa có hồ sơ'
+                WHEN SUM(v.outstanding_amount) = 0 THEN 'Đã thanh toán đủ'
+                WHEN SUM(v.total_paid) = 0 AND SUM(v.net_due) > 0 THEN 'Chưa thanh toán'
+                ELSE 'Thanh toán một phần'
+            END AS payment_status_label,
+            {$totalStudentsCount} AS total_students_count,
+            {$withRecordsCount} AS with_records_count,
+            {$fullyPaidCount} AS fully_paid_count,
+            {$outstandingCount} AS outstanding_count,
+            {$overpaidCount} AS overpaid_count
+        ";
+
         if (!is_search_query_empty_or_diacritics_only($rawQ)) {
             $norm = normalize_vietnamese($rawQ);
             $stmt = $db->prepare(
-                "SELECT s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at,
-                        CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END AS has_account,
-                        u.username AS account_username
+                "SELECT {$selectFields}
                  FROM students s
                  LEFT JOIN users u ON u.student_id = s.id
+                 LEFT JOIN {$feeSub} v ON s.id = v.student_id
                  WHERE s.student_code LIKE :code OR s.name_search LIKE :q
+                 GROUP BY s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at, u.id, u.username
                  ORDER BY s.id ASC"
             );
             $stmt->execute([
@@ -43,15 +112,42 @@ function handle_students_routes(string $method, string $path, array $matches): v
             ]);
         } else {
             $stmt = $db->query(
-                "SELECT s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at,
-                        CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END AS has_account,
-                        u.username AS account_username
+                "SELECT {$selectFields}
                  FROM students s
                  LEFT JOIN users u ON u.student_id = s.id
+                 LEFT JOIN {$feeSub} v ON s.id = v.student_id
+                 GROUP BY s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at, u.id, u.username
                  ORDER BY s.id ASC"
             );
         }
-        json_success($stmt->fetchAll());
+
+        $students = $stmt->fetchAll();
+        foreach ($students as &$st) {
+            $st['id'] = (int)$st['id'];
+            $st['has_account'] = (int)$st['has_account'];
+            $st['fee_records_count'] = (int)$st['fee_records_count'];
+            $st['total_net_due'] = (int)$st['total_net_due'];
+            $st['total_paid'] = (int)$st['total_paid'];
+            $st['total_refunded'] = (int)$st['total_refunded'];
+            $st['total_outstanding'] = (int)$st['total_outstanding'];
+            $st['total_overpaid'] = (int)$st['total_overpaid'];
+            $st['total_students_count'] = (int)$st['total_students_count'];
+            $st['with_records_count'] = (int)$st['with_records_count'];
+            $st['fully_paid_count'] = (int)$st['fully_paid_count'];
+            $st['outstanding_count'] = (int)$st['outstanding_count'];
+            $st['overpaid_count'] = (int)$st['overpaid_count'];
+        }
+        unset($st);
+
+        json_success($students, 200, [
+            'summary' => [
+                'total_students_count' => $totalStudentsCount,
+                'with_records_count'   => $withRecordsCount,
+                'fully_paid_count'     => $fullyPaidCount,
+                'outstanding_count'    => $outstandingCount,
+                'overpaid_count'       => $overpaidCount,
+            ]
+        ]);
     }
 
     // 2. POST /api/students (Create)
@@ -279,11 +375,22 @@ function handle_students_routes(string $method, string $path, array $matches): v
             json_error('Không thể xóa sinh viên đã có dữ liệu học phí.', 'STUDENT_HAS_RECORDS', 409);
         }
 
-        // Xóa tài khoản sinh viên nếu có trước khi xóa hồ sơ sinh viên
-        $db->prepare("DELETE FROM users WHERE student_id = :id")->execute(['id' => $studentId]);
+        // Xóa an toàn trong giao dịch bảo toàn toàn vẹn tham chiếu
+        db_transaction(function (PDO $pdo) use ($studentId) {
+            // Xóa tài khoản sinh viên nếu có trước khi xóa hồ sơ sinh viên
+            $userStmt = $pdo->prepare("SELECT id FROM users WHERE student_id = :id");
+            $userStmt->execute(['id' => $studentId]);
+            $studentUser = $userStmt->fetch();
+            if ($studentUser) {
+                $studentUserId = (int)$studentUser['id'];
+                $pdo->prepare("DELETE FROM user_nav_state WHERE user_id = :uid")->execute(['uid' => $studentUserId]);
+                $pdo->prepare("UPDATE audit_log SET user_id = NULL WHERE user_id = :uid")->execute(['uid' => $studentUserId]);
+                $pdo->prepare("DELETE FROM users WHERE id = :uid")->execute(['uid' => $studentUserId]);
+            }
 
-        $delStmt = $db->prepare("DELETE FROM students WHERE id = :id");
-        $delStmt->execute(['id' => $studentId]);
+            $delStmt = $pdo->prepare("DELETE FROM students WHERE id = :id");
+            $delStmt->execute(['id' => $studentId]);
+        }, $db);
 
         log_audit(null, 'delete', 'students', (string)$studentId, [
             'student_code' => $student['student_code'],

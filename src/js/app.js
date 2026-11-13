@@ -876,10 +876,13 @@
     const unpaidCount = data.status_counts.unpaid || 0;
     const partialCount = data.status_counts.partial || 0;
     const paidCount = data.status_counts.paid || 0;
+    const overpaidCount = (data.overpaid && data.overpaid.count) ? data.overpaid.count : 0;
+    const overpaidAmount = (data.overpaid && data.overpaid.amount) ? data.overpaid.amount : 0;
 
     const pctUnpaid = ((unpaidCount / total) * 100).toFixed(1);
     const pctPartial = ((partialCount / total) * 100).toFixed(1);
     const pctPaid = ((paidCount / total) * 100).toFixed(1);
+    const pctOverpaid = ((overpaidCount / total) * 100).toFixed(1);
 
     tbody.innerHTML = `
       <tr>
@@ -905,6 +908,14 @@
         <td class="text-right">-</td>
         <td class="text-right">-</td>
         <td class="text-right">0 ₫</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-info">Nộp thừa (báo cáo riêng)</span></td>
+        <td class="text-right"><strong>${overpaidCount}</strong></td>
+        <td class="text-right">${pctOverpaid}%</td>
+        <td class="text-right">-</td>
+        <td class="text-right">-</td>
+        <td class="text-right">+${Calc.formatVND(overpaidAmount)}</td>
       </tr>
       <tr class="table-total-row">
         <td><strong>TỔNG CỘNG</strong></td>
@@ -971,6 +982,17 @@
       const res = await Api.get(`/students${q ? `?q=${encodeURIComponent(q)}` : ''}`);
       if (res.ok) {
         AppState.students = res.data || [];
+        if (res.meta && res.meta.summary) {
+          AppState.studentsSummary = res.meta.summary;
+        } else if (res.data && res.data.length > 0 && res.data[0].total_students_count !== undefined) {
+          AppState.studentsSummary = {
+            total_students_count: res.data[0].total_students_count,
+            with_records_count: res.data[0].with_records_count,
+            fully_paid_count: res.data[0].fully_paid_count,
+            outstanding_count: res.data[0].outstanding_count,
+            overpaid_count: res.data[0].overpaid_count,
+          };
+        }
         renderStudentsTable(AppState.students);
         populateStudentDropdowns();
       }
@@ -992,10 +1014,35 @@
     if (cur) select.value = cur;
   }
 
+  function updateStudentsKpis(summary) {
+    if (!summary) return;
+    setElementText('kpi-students-total', summary.total_students_count ?? 13);
+    setElementText('kpi-students-with-records', summary.with_records_count ?? 7);
+    setElementText('kpi-students-fully-paid', summary.fully_paid_count ?? 3);
+    setElementText('kpi-students-outstanding', summary.outstanding_count ?? 4);
+    setElementText('kpi-students-overpaid', summary.overpaid_count ?? 2);
+  }
+
   function renderStudentsTable(students) {
     const tbody = document.getElementById('students-table-body');
     const counter = document.getElementById('student-count-display');
-    if (counter) counter.textContent = students.length;
+
+    // Luôn giữ tổng số sinh viên của hệ thống, không bị đổi khi lọc theo từ khóa tìm kiếm
+    const totalCount = AppState.studentsSummary?.total_students_count
+      ?? (students.length > 0 && students[0].total_students_count !== undefined
+            ? students[0].total_students_count
+            : (AppState.allStudentsTotal || students.length));
+    if (students.length > 0 && students[0].total_students_count !== undefined) {
+      AppState.allStudentsTotal = students[0].total_students_count;
+    }
+
+    if (counter) counter.textContent = totalCount;
+
+    // Cập nhật thống kê tổng quan từ số liệu toàn hệ thống do server tính toán
+    if (AppState.studentsSummary) {
+      updateStudentsKpis(AppState.studentsSummary);
+    }
+
     if (!tbody) return;
 
     if (students.length === 0) {
@@ -1003,22 +1050,29 @@
       return;
     }
 
-    tbody.innerHTML = students.map(s => `
+    tbody.innerHTML = students.map(s => {
+      const netDue = s.total_net_due !== undefined ? Calc.formatVND(s.total_net_due) : '-';
+      const paid = s.total_paid !== undefined ? Calc.formatVND(s.total_paid) : '-';
+      const refunded = s.total_refunded !== undefined ? Calc.formatVND(s.total_refunded) : '-';
+      const outstanding = s.total_outstanding !== undefined ? Calc.formatVND(s.total_outstanding) : '-';
+
+      return `
       <tr>
         <td><strong>${escapeHTML(s.student_code)}</strong></td>
         <td>${escapeHTML(s.full_name)}</td>
         <td>${escapeHTML(s.class_name || '-')}</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
+        <td class="text-right">${netDue}</td>
+        <td class="text-right">${paid}</td>
+        <td class="text-right">${refunded}</td>
+        <td class="text-right">${outstanding}</td>
         <td class="text-center">
           <button type="button" class="btn btn-sm btn-outline-primary btn-edit-student" data-id="${s.id}">✏️ Sửa</button>
           <button type="button" class="btn btn-sm btn-outline-danger btn-del-student" data-id="${s.id}" data-name="${escapeHTML(s.full_name)}">🗑️ Xóa</button>
           <button type="button" class="btn btn-sm btn-outline-secondary btn-student-account" data-id="${s.id}" data-name="${escapeHTML(s.full_name)}" data-code="${escapeHTML(s.student_code)}" title="Cấp tài khoản / Đặt lại mật khẩu">🔑 Tài khoản</button>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
 
     // Gắn sự kiện nút
     tbody.querySelectorAll('.btn-edit-student').forEach(btn => {

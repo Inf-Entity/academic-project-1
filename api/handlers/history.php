@@ -160,7 +160,7 @@ function handle_history_routes(string $method, string $path): void {
         }
 
         if ($statusFilter !== '' && $statusFilter !== 'ALL') {
-            $sLower = strtolower($statusFilter);
+            $sLower = mb_strtolower($statusFilter, 'UTF-8');
             if (in_array($sLower, ['payment', 'thu học phí'], true)) {
                 $sql .= " AND l.entry_type = 'payment'";
             } elseif (in_array($sLower, ['reversal', 'đảo mục', 'hủy'], true)) {
@@ -168,13 +168,13 @@ function handle_history_routes(string $method, string $path): void {
             } elseif (in_array($sLower, ['transfer', 'chuyển khoản', 'chuyển khoản nội bộ'], true)) {
                 $sql .= " AND l.entry_type IN ('transfer_out', 'transfer_in')";
             } elseif (in_array($sLower, ['unpaid', 'chưa thanh toán'], true)) {
-                $sql .= " AND v.total_paid <= 0 AND v.net_due > 0";
+                $sql .= " AND v.derived_status = 'Unpaid'";
             } elseif (in_array($sLower, ['partially paid', 'thanh toán một phần', 'partial'], true)) {
-                $sql .= " AND v.total_paid > 0 AND v.total_paid < v.net_due";
+                $sql .= " AND v.derived_status = 'Partially Paid'";
             } elseif (in_array($sLower, ['fully paid', 'đã thanh toán đủ', 'paid'], true)) {
-                $sql .= " AND v.total_paid >= v.net_due";
+                $sql .= " AND v.derived_status = 'Fully Paid'";
             } elseif (in_array($sLower, ['overpaid', 'thừa tiền', 'nộp thừa'], true)) {
-                $sql .= " AND v.total_paid > v.net_due";
+                $sql .= " AND v.derived_status = 'Overpaid'";
             }
         }
 

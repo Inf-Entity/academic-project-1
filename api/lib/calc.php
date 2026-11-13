@@ -159,74 +159,93 @@ function number_to_vietnamese_words(int $amount): string {
 function get_fee_summary_subquery(): string {
     return "(
         SELECT 
-            fr.id AS fee_record_id,
-            fr.student_id,
-            fr.semester_id,
-            fr.registered_credits,
-            fr.rate_snapshot,
-            fr.gross_tuition,
-            ex.id AS exemption_id,
-            ex.type AS exemption_type,
-            ex.value AS exemption_value,
-            ex.reason AS exemption_reason,
+            base.*,
             CASE 
-                WHEN ex.type = 'percent' THEN ROUND(fr.gross_tuition * ex.value / 100)
-                WHEN ex.type = 'fixed' THEN LEAST(fr.gross_tuition, ex.value)
-                ELSE 0
-            END AS exemption_amount,
-            GREATEST(0, fr.gross_tuition - (
+                WHEN base.total_paid > base.net_due THEN 'Overpaid'
+                WHEN base.total_paid <= 0 AND base.net_due > 0 THEN 'Unpaid'
+                WHEN base.total_paid > 0 AND base.total_paid < base.net_due THEN 'Partially Paid'
+                ELSE 'Fully Paid'
+            END AS derived_status,
+            CASE 
+                WHEN base.total_paid > base.net_due THEN 'Nộp thừa'
+                WHEN base.total_paid <= 0 AND base.net_due > 0 THEN 'Chưa thanh toán'
+                WHEN base.total_paid > 0 AND base.total_paid < base.net_due THEN 'Thanh toán một phần'
+                ELSE 'Đã thanh toán đủ'
+            END AS derived_status_label,
+            CASE WHEN base.total_paid > base.net_due THEN 1 ELSE 0 END AS is_overpaid,
+            CASE WHEN base.total_paid > base.net_due THEN (base.total_paid - base.net_due) ELSE 0 END AS overpaid_amount,
+            GREATEST(0, base.net_due - base.total_paid) AS outstanding_amount
+        FROM (
+            SELECT 
+                fr.id AS fee_record_id,
+                fr.student_id,
+                fr.semester_id,
+                fr.registered_credits,
+                fr.rate_snapshot,
+                fr.gross_tuition,
+                ex.id AS exemption_id,
+                ex.type AS exemption_type,
+                ex.value AS exemption_value,
+                ex.reason AS exemption_reason,
                 CASE 
                     WHEN ex.type = 'percent' THEN ROUND(fr.gross_tuition * ex.value / 100)
                     WHEN ex.type = 'fixed' THEN LEAST(fr.gross_tuition, ex.value)
                     ELSE 0
-                END
-            )) AS net_due,
-            COALESCE(p.payments_sum, 0) AS payments_sum,
-            COALESCE(r.reversals_sum, 0) AS reversals_sum,
-            COALESCE(rf_comp.completed_refunds_sum, 0) AS completed_refunds_sum,
-            COALESCE(rf_pend.pending_refunds_sum, 0) AS pending_refunds_sum,
-            COALESCE(rf_pend.pending_refunds_count, 0) AS pending_refunds_count,
-            COALESCE(tout.transfer_out_sum, 0) AS transfer_out_sum,
-            COALESCE(tin.transfer_in_sum, 0) AS transfer_in_sum,
-            (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0) - COALESCE(tout.transfer_out_sum, 0) + COALESCE(tin.transfer_in_sum, 0)) AS total_paid
-        FROM fee_records fr
-        LEFT JOIN exemptions ex ON fr.id = ex.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS payments_sum
-            FROM ledger_entries
-            WHERE entry_type = 'payment'
-            GROUP BY fee_record_id
-        ) p ON fr.id = p.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS reversals_sum
-            FROM ledger_entries
-            WHERE entry_type = 'reversal'
-            GROUP BY fee_record_id
-        ) r ON fr.id = r.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS completed_refunds_sum
-            FROM refund_requests
-            WHERE status = 'completed'
-            GROUP BY fee_record_id
-        ) rf_comp ON fr.id = rf_comp.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS pending_refunds_sum, COUNT(*) AS pending_refunds_count
-            FROM refund_requests
-            WHERE status = 'pending'
-            GROUP BY fee_record_id
-        ) rf_pend ON fr.id = rf_pend.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS transfer_out_sum
-            FROM ledger_entries
-            WHERE entry_type = 'transfer_out'
-            GROUP BY fee_record_id
-        ) tout ON fr.id = tout.fee_record_id
-        LEFT JOIN (
-            SELECT fee_record_id, SUM(amount) AS transfer_in_sum
-            FROM ledger_entries
-            WHERE entry_type = 'transfer_in'
-            GROUP BY fee_record_id
-        ) tin ON fr.id = tin.fee_record_id
+                END AS exemption_amount,
+                GREATEST(0, fr.gross_tuition - (
+                    CASE 
+                        WHEN ex.type = 'percent' THEN ROUND(fr.gross_tuition * ex.value / 100)
+                        WHEN ex.type = 'fixed' THEN LEAST(fr.gross_tuition, ex.value)
+                        ELSE 0
+                    END
+                )) AS net_due,
+                COALESCE(p.payments_sum, 0) AS payments_sum,
+                COALESCE(r.reversals_sum, 0) AS reversals_sum,
+                COALESCE(rf_comp.completed_refunds_sum, 0) AS completed_refunds_sum,
+                COALESCE(rf_pend.pending_refunds_sum, 0) AS pending_refunds_sum,
+                COALESCE(rf_pend.pending_refunds_count, 0) AS pending_refunds_count,
+                COALESCE(tout.transfer_out_sum, 0) AS transfer_out_sum,
+                COALESCE(tin.transfer_in_sum, 0) AS transfer_in_sum,
+                (COALESCE(p.payments_sum, 0) - COALESCE(r.reversals_sum, 0) - COALESCE(rf_comp.completed_refunds_sum, 0) - COALESCE(tout.transfer_out_sum, 0) + COALESCE(tin.transfer_in_sum, 0)) AS total_paid
+            FROM fee_records fr
+            LEFT JOIN exemptions ex ON fr.id = ex.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS payments_sum
+                FROM ledger_entries
+                WHERE entry_type = 'payment'
+                GROUP BY fee_record_id
+            ) p ON fr.id = p.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS reversals_sum
+                FROM ledger_entries
+                WHERE entry_type = 'reversal'
+                GROUP BY fee_record_id
+            ) r ON fr.id = r.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS completed_refunds_sum
+                FROM refund_requests
+                WHERE status = 'completed'
+                GROUP BY fee_record_id
+            ) rf_comp ON fr.id = rf_comp.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS pending_refunds_sum, COUNT(*) AS pending_refunds_count
+                FROM refund_requests
+                WHERE status = 'pending'
+                GROUP BY fee_record_id
+            ) rf_pend ON fr.id = rf_pend.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS transfer_out_sum
+                FROM ledger_entries
+                WHERE entry_type = 'transfer_out'
+                GROUP BY fee_record_id
+            ) tout ON fr.id = tout.fee_record_id
+            LEFT JOIN (
+                SELECT fee_record_id, SUM(amount) AS transfer_in_sum
+                FROM ledger_entries
+                WHERE entry_type = 'transfer_in'
+                GROUP BY fee_record_id
+            ) tin ON fr.id = tin.fee_record_id
+        ) base
     )";
 }
 

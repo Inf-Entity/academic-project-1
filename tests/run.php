@@ -2673,6 +2673,218 @@ $pdo->prepare("DELETE FROM ledger_entries WHERE fee_record_id = :id")->execute([
 $pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $sv011NewFrId]);
 
 // ----------------------------------------------------------------------------
+// 23. KIỂM THỬ KHẮC PHỤC 3 LỖI HỆ THỐNG (ISSUES 1, 2, 3 VERIFICATION)
+// ----------------------------------------------------------------------------
+suite_header("23. Kiểm thử Khắc phục 3 Lỗi Hệ thống (Issues 1, 2, 3)");
+
+// Nạp lại dữ liệu seed chuẩn để kiểm tra số liệu nguyên bản
+reset_test_database($rootPdo);
+$pdo = get_db_connection('tuition_test');
+$api = new ApiTestClient();
+$api->login('admin', 'Admin@123');
+
+// 1. Issue 1: Không có lỗi HTTP 500 khi xóa sinh viên đã cấp tài khoản người dùng
+$sv013Stmt = $pdo->query("SELECT id FROM students WHERE student_code = 'SV013'");
+$sv013Id = (int)$sv013Stmt->fetchColumn();
+if ($sv013Id > 0) {
+    // Cấp tài khoản cho SV013
+    $api->request('POST', "/students/{$sv013Id}/account");
+    // Xóa SV013 qua API (trước đây bị lỗi 500 do foreign key constraint fk_users_students)
+    $delSv013Res = $api->request('DELETE', "/students/{$sv013Id}");
+    it("Xóa sinh viên có tài khoản người dùng thành công (HTTP 200) không gây lỗi 500", 
+        $delSv013Res['status'] === 200 && ($delSv013Res['body']['ok'] ?? false) === true
+    );
+    // Khôi phục SV013 để bảo toàn dữ liệu seed
+    $pdo->prepare("INSERT INTO students (id, student_code, full_name, name_search, class_name, created_at, updated_at) VALUES (:id, 'SV013', 'Hoàng Minh Tuấn', 'hoang minh tuan', 'CNTT1', NOW(), NOW())")->execute(['id' => $sv013Id]);
+}
+
+// 2. Issue 1: Đổi mật khẩu sinh viên không phát sinh Warning/TypeError (500)
+$sv006Client = new ApiTestClient();
+$sv006Client->login('sv006', 'Student@006');
+$pwWrongRes = $sv006Client->request('POST', '/student/password', [
+    'current_password'          => 'WrongPassword@123',
+    'new_password'              => 'StudentNew@006',
+    'new_password_confirmation' => 'StudentNew@006'
+]);
+it("POST /student/password xử lý an toàn không sinh 500 khi mật khẩu sai (trả về HTTP 400)", 
+    $pwWrongRes['status'] === 400 && ($pwWrongRes['body']['error']['code'] ?? '') === 'INVALID_PASSWORD'
+);
+
+// 3. Issue 1: Ngoại lệ không mong muốn trả về thông điệp tiếng Việt 500 chuẩn, không lộ đường dẫn hay stack trace
+$forcedExRes = $api->request('GET', '/me', null, ['X-Test-Force-Exception' => '1']);
+$forcedBodyStr = json_encode($forcedExRes['body'], JSON_UNESCAPED_UNICODE);
+it("Ngoại lệ trả về HTTP 500 với thông báo tiếng Việt chung, không lộ stack trace hay đường dẫn file", 
+    $forcedExRes['status'] === 500 
+    && ($forcedExRes['body']['error']['message'] ?? '') === 'Đã xảy ra lỗi hệ thống. Vui lòng thử lại.'
+    && ($forcedExRes['body']['error']['code'] ?? '') === 'INTERNAL_SERVER_ERROR'
+    && strpos($forcedBodyStr, 'Stack Trace') === false
+    && strpos($forcedBodyStr, 'bigprojectnew') === false
+    && strpos($forcedBodyStr, '.php') === false
+);
+
+// 4. Issue 2: Thống kê trạng thái thanh toán khớp trực tiếp SQL trên từng học kỳ và toàn hệ thống
+$feeSubSql = get_fee_summary_subquery();
+
+// Toàn hệ thống (ALL)
+$repAllRes = $api->request('GET', '/reports/summary');
+$allData = $repAllRes['body']['data'] ?? [];
+$sqlAllCounts = $pdo->query("SELECT 
+    COUNT(CASE WHEN v.derived_status = 'Unpaid' THEN 1 END) AS unpaid,
+    COUNT(CASE WHEN v.derived_status = 'Partially Paid' THEN 1 END) AS partial,
+    COUNT(CASE WHEN v.derived_status = 'Fully Paid' THEN 1 END) AS paid,
+    COUNT(CASE WHEN v.derived_status = 'Overpaid' THEN 1 END) AS overpaid,
+    COUNT(*) AS total
+FROM {$feeSubSql} v")->fetch();
+
+it("Báo cáo ALL: 3 trạng thái khớp trực tiếp SQL (Unpaid={$sqlAllCounts['unpaid']}, Partial={$sqlAllCounts['partial']}, Paid={$sqlAllCounts['paid']})", 
+    (int)($allData['status_counts']['unpaid'] ?? -1) === (int)$sqlAllCounts['unpaid']
+    && (int)($allData['status_counts']['partial'] ?? -1) === (int)$sqlAllCounts['partial']
+    && (int)($allData['status_counts']['paid'] ?? -1) === (int)$sqlAllCounts['paid']
+);
+it("Báo cáo ALL: Nộp thừa được báo cáo riêng biệt (Overpaid={$sqlAllCounts['overpaid']}) và tổng 3 trạng thái bằng tổng trừ nộp thừa", 
+    (int)($allData['overpaid']['count'] ?? -1) === (int)$sqlAllCounts['overpaid']
+    && ((int)$allData['status_counts']['unpaid'] + (int)$allData['status_counts']['partial'] + (int)$allData['status_counts']['paid']) === ((int)$allData['total_students_with_records'] - (int)$allData['overpaid']['count'])
+    && ((int)$allData['status_counts']['unpaid'] + (int)$allData['status_counts']['partial'] + (int)$allData['status_counts']['paid'] + (int)$allData['overpaid']['count']) === (int)$allData['total_students_with_records']
+);
+
+// Học kỳ 1 (2025-2026)
+$repSem1Res = $api->request('GET', '/reports/summary?semester=1');
+$sem1Data = $repSem1Res['body']['data'] ?? [];
+$sqlSem1Counts = $pdo->query("SELECT 
+    COUNT(CASE WHEN v.derived_status = 'Unpaid' THEN 1 END) AS unpaid,
+    COUNT(CASE WHEN v.derived_status = 'Partially Paid' THEN 1 END) AS partial,
+    COUNT(CASE WHEN v.derived_status = 'Fully Paid' THEN 1 END) AS paid,
+    COUNT(CASE WHEN v.derived_status = 'Overpaid' THEN 1 END) AS overpaid,
+    COUNT(*) AS total
+FROM {$feeSubSql} v WHERE v.semester_id = 1")->fetch();
+
+it("Báo cáo HK1 2025-2026: Khớp đúng SQL (Unpaid=0, Partial=0, Paid=4, Overpaid=0, Total=4)", 
+    (int)($sem1Data['status_counts']['unpaid'] ?? -1) === (int)$sqlSem1Counts['unpaid']
+    && (int)($sem1Data['status_counts']['partial'] ?? -1) === (int)$sqlSem1Counts['partial']
+    && (int)($sem1Data['status_counts']['paid'] ?? -1) === (int)$sqlSem1Counts['paid']
+    && (int)($sem1Data['overpaid']['count'] ?? -1) === (int)$sqlSem1Counts['overpaid']
+    && (int)($sem1Data['total_students_with_records'] ?? -1) === (int)$sqlSem1Counts['total']
+);
+
+// Học kỳ 2 (2025-2026 - kỳ có 2 hồ sơ nộp thừa)
+$repSem2Res = $api->request('GET', '/reports/summary?semester=2');
+$sem2Data = $repSem2Res['body']['data'] ?? [];
+$sqlSem2Counts = $pdo->query("SELECT 
+    COUNT(CASE WHEN v.derived_status = 'Unpaid' THEN 1 END) AS unpaid,
+    COUNT(CASE WHEN v.derived_status = 'Partially Paid' THEN 1 END) AS partial,
+    COUNT(CASE WHEN v.derived_status = 'Fully Paid' THEN 1 END) AS paid,
+    COUNT(CASE WHEN v.derived_status = 'Overpaid' THEN 1 END) AS overpaid,
+    COUNT(*) AS total
+FROM {$feeSubSql} v WHERE v.semester_id = 2")->fetch();
+
+it("Báo cáo HK2 2025-2026: Đã thanh toán đủ = 1 (không gộp 2 hồ sơ nộp thừa vào paid)", 
+    (int)($sem2Data['status_counts']['paid'] ?? -1) === 1
+    && (int)($sem2Data['overpaid']['count'] ?? -1) === 2
+    && (int)($sem2Data['status_counts']['unpaid'] ?? -1) === 1
+    && (int)($sem2Data['status_counts']['partial'] ?? -1) === 0
+);
+
+// Học kỳ 1 (2026-2027)
+$repSem3Res = $api->request('GET', '/reports/summary?semester=3');
+$sem3Data = $repSem3Res['body']['data'] ?? [];
+it("Báo cáo HK1 2026-2027: Khớp đúng seed data (Unpaid=2, Partial=2, Paid=1, Overpaid=0, Total=5)", 
+    (int)($sem3Data['status_counts']['unpaid'] ?? -1) === 2
+    && (int)($sem3Data['status_counts']['partial'] ?? -1) === 2
+    && (int)($sem3Data['status_counts']['paid'] ?? -1) === 1
+    && (int)($sem3Data['overpaid']['count'] ?? -1) === 0
+    && (int)($sem3Data['total_students_with_records'] ?? -1) === 5
+);
+
+// 5. Issue 2: Sinh viên có 2 hồ sơ ở trạng thái khác nhau được tính 1 lần cho mỗi hồ sơ
+$sv002Records = $pdo->query("SELECT v.semester_id, v.derived_status FROM {$feeSubSql} v JOIN students s ON v.student_id = s.id WHERE s.student_code = 'SV002'")->fetchAll();
+$sv002Statuses = array_column($sv002Records, 'derived_status');
+it("SV002 có 3 hồ sơ học phí: 2 hồ sơ 'Fully Paid' và 1 hồ sơ 'Partially Paid'", 
+    count($sv002Statuses) === 3
+    && count(array_filter($sv002Statuses, fn($s) => $s === 'Fully Paid')) === 2
+    && count(array_filter($sv002Statuses, fn($s) => $s === 'Partially Paid')) === 1
+);
+
+// Issue 2: Tra cứu lịch sử sử dụng chung derived_status duy nhất từ calc.php
+$histPaidRes = $api->request('GET', '/history?status=' . urlencode('Đã thanh toán đủ'));
+$histPaidEntries = $histPaidRes['body']['data'] ?? [];
+$histPaidOk = true;
+foreach ($histPaidEntries as $entry) {
+    $ckStmt = $pdo->prepare("SELECT derived_status FROM {$feeSubSql} v WHERE v.fee_record_id = :frId");
+    $ckStmt->execute(['frId' => $entry['fee_record_id']]);
+    if ($ckStmt->fetchColumn() !== 'Fully Paid') {
+        $histPaidOk = false;
+        break;
+    }
+}
+it("GET /api/history?status=Đã thanh toán đủ sử dụng đúng derived_status duy nhất từ calc.php", 
+    $histPaidRes['status'] === 200 && count($histPaidEntries) > 0 && $histPaidOk
+);
+
+// 6. Issue 3: Tổng số sinh viên và KPI thống kê không đổi khi lọc theo từ khóa tìm kiếm
+$stListAllRes = $api->request('GET', '/students');
+$stListFilterRes = $api->request('GET', '/students?q=nguyen');
+$stListZeroRes = $api->request('GET', '/students?q=nonexistentstudent');
+
+$allStudents = $stListAllRes['body']['data'] ?? [];
+$filteredStudents = $stListFilterRes['body']['data'] ?? [];
+$zeroStudents = $stListZeroRes['body']['data'] ?? [];
+$sqlTotalStudents = (int)$pdo->query("SELECT COUNT(*) FROM students")->fetchColumn();
+
+$allSummary = $stListAllRes['body']['meta']['summary'] ?? [];
+$filterSummary = $stListFilterRes['body']['meta']['summary'] ?? [];
+$zeroSummary = $stListZeroRes['body']['meta']['summary'] ?? [];
+
+it("Danh sách sinh viên trả về total_students_count = 13 không đổi khi lọc tìm kiếm", 
+    count($allStudents) === $sqlTotalStudents
+    && count($filteredStudents) === 2
+    && count($zeroStudents) === 0
+    && (int)($allStudents[0]['total_students_count'] ?? 0) === $sqlTotalStudents
+    && (int)($filteredStudents[0]['total_students_count'] ?? 0) === $sqlTotalStudents
+);
+
+it("Server trả về thống kê toàn trường (KPI summary) chuẩn xác kể cả khi danh sách bị lọc hoặc rỗng", 
+    (int)($allSummary['total_students_count'] ?? 0) === 13
+    && (int)($allSummary['with_records_count'] ?? 0) === 7
+    && (int)($allSummary['fully_paid_count'] ?? 0) === 3
+    && (int)($allSummary['outstanding_count'] ?? 0) === 4
+    && (int)($allSummary['overpaid_count'] ?? 0) === 2
+    && (int)($filterSummary['with_records_count'] ?? 0) === 7
+    && (int)($filterSummary['fully_paid_count'] ?? 0) === 3
+    && (int)($zeroSummary['total_students_count'] ?? 0) === 13
+    && (int)($zeroSummary['with_records_count'] ?? 0) === 7
+);
+
+// 7. Issue 3: Số liệu tài chính từng sinh viên khớp đúng SQL (bao gồm SV miễn 100% là Fully Paid)
+$studentsByCode = [];
+foreach ($allStudents as $st) {
+    $studentsByCode[$st['student_code']] = $st;
+}
+
+it("SV006 (miễn 100%, net_due = 0) có trạng thái 'Đã thanh toán đủ', không bị đếm nhầm thành 'Chưa thanh toán'", 
+    isset($studentsByCode['SV006'])
+    && $studentsByCode['SV006']['total_net_due'] === 0
+    && $studentsByCode['SV006']['total_paid'] === 0
+    && $studentsByCode['SV006']['total_outstanding'] === 0
+    && $studentsByCode['SV006']['payment_status'] === 'Đã thanh toán đủ'
+);
+
+it("SV001 có tổng phải nộp 18.675.000, đã nộp 19.675.000, nợ 0, trạng thái 'Đã thanh toán đủ'", 
+    isset($studentsByCode['SV001'])
+    && $studentsByCode['SV001']['total_net_due'] === 18675000
+    && $studentsByCode['SV001']['total_paid'] === 19675000
+    && $studentsByCode['SV001']['total_outstanding'] === 0
+    && $studentsByCode['SV001']['payment_status'] === 'Đã thanh toán đủ'
+);
+
+it("SV002 có tổng phải nộp 37.796.000, đã nộp 27.496.000, còn nợ 10.300.000, trạng thái 'Thanh toán một phần'", 
+    isset($studentsByCode['SV002'])
+    && $studentsByCode['SV002']['total_net_due'] === 37796000
+    && $studentsByCode['SV002']['total_paid'] === 27496000
+    && $studentsByCode['SV002']['total_outstanding'] === 10300000
+    && $studentsByCode['SV002']['payment_status'] === 'Thanh toán một phần'
+);
+
+// ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ
 // ----------------------------------------------------------------------------
 echo "\n" . COLOR_BOLD . "====================================================================\n";

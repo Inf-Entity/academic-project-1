@@ -46,6 +46,11 @@ set_exception_handler(function (Throwable $e) {
     json_error('Đã xảy ra lỗi hệ thống. Vui lòng thử lại.', 'INTERNAL_SERVER_ERROR', 500);
 });
 
+// Cho phép kiểm thử tự động xác thực bộ xử lý ngoại lệ 500 khi chạy test suite
+if (!empty($_SERVER['HTTP_X_TUITION_TEST_DB']) && !empty($_SERVER['HTTP_X_TEST_FORCE_EXCEPTION'])) {
+    throw new RuntimeException("Forced test exception for 500 handler verification");
+}
+
 // Nạp các module handlers
 require_once __DIR__ . '/handlers/auth.php';
 require_once __DIR__ . '/handlers/students.php';

@@ -16,13 +16,17 @@ function send_security_headers(): void {
     header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none';");
 }
 
-function json_success($data = null, int $statusCode = 200): void {
+function json_success($data = null, int $statusCode = 200, ?array $meta = null): void {
     send_security_headers();
     http_response_code($statusCode);
-    echo json_encode([
+    $payload = [
         'ok'   => true,
         'data' => $data
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    ];
+    if ($meta !== null) {
+        $payload['meta'] = $meta;
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 

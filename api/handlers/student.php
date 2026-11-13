@@ -48,14 +48,15 @@ function handle_student_routes(string $method, string $path, array $matches): vo
         }
 
         // Kiểm tra mật khẩu hiện tại
-        if (!password_verify($currentPw, $user['password_hash'])) {
+        $pwHash = (string)($user['password_hash'] ?? '');
+        if ($pwHash === '' || !password_verify($currentPw, $pwHash)) {
             json_error('Mật khẩu hiện tại không chính xác.', 'INVALID_PASSWORD', 400, [
                 'current_password' => 'Mật khẩu hiện tại không chính xác.'
             ]);
         }
 
         // Không cho phép tái sử dụng mật khẩu hiện tại / tạm thời
-        if (password_verify($newPw, $user['password_hash'])) {
+        if (password_verify($newPw, $pwHash)) {
             json_error('Mật khẩu mới không được trùng với mật khẩu hiện tại/tạm thời.', 'PASSWORD_REUSE', 400, [
                 'new_password' => 'Mật khẩu mới không được trùng với mật khẩu hiện tại/tạm thời.'
             ]);
@@ -680,8 +681,8 @@ function handle_student_routes(string $method, string $path, array $matches): vo
                 return false;
             }
             if ($typeFilter !== '' && $typeFilter !== 'ALL') {
-                $tLower = strtolower($typeFilter);
-                if ($entry['entry_type'] !== $tLower && strtolower($entry['entry_type_label']) !== $tLower) {
+                $tLower = mb_strtolower($typeFilter, 'UTF-8');
+                if (mb_strtolower($entry['entry_type'], 'UTF-8') !== $tLower && mb_strtolower($entry['entry_type_label'], 'UTF-8') !== $tLower) {
                     return false;
                 }
             }

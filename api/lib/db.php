@@ -41,11 +41,15 @@ function get_db_connection(?string $overrideDbName = null): PDO {
     $cfg = get_db_config($overrideDbName);
     $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=%s', $cfg['host'], $cfg['port'], $cfg['name'], $cfg['charset'] ?? 'utf8mb4');
 
+    $mysqlInitCmd = defined('Pdo\\Mysql::ATTR_INIT_COMMAND')
+        ? \Pdo\Mysql::ATTR_INIT_COMMAND
+        : (defined('PDO::MYSQL_ATTR_INIT_COMMAND') ? PDO::MYSQL_ATTR_INIT_COMMAND : 1002);
+
     $options = [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
-        PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4",
+        $mysqlInitCmd                => "SET NAMES utf8mb4",
     ];
 
     $pdo = new PDO($dsn, $cfg['user'], $cfg['pass'], $options);
