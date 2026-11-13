@@ -34,23 +34,29 @@ ALTER TABLE `fee_records` AUTO_INCREMENT = 1;
 DELETE FROM `credit_rates`;
 ALTER TABLE `credit_rates` AUTO_INCREMENT = 1;
 
+DELETE FROM `student_settings`;
+
+DELETE FROM `users`;
+ALTER TABLE `users` AUTO_INCREMENT = 1;
+
 DELETE FROM `students`;
 ALTER TABLE `students` AUTO_INCREMENT = 1;
 
 DELETE FROM `semesters`;
 ALTER TABLE `semesters` AUTO_INCREMENT = 1;
 
-DELETE FROM `users`;
-ALTER TABLE `users` AUTO_INCREMENT = 1;
-
 -- 1. Học kỳ (Semesters)
--- ID 1: HK1 2025-2026
--- ID 2: HK2 2025-2026
--- ID 3: HK1 2026-2027
-INSERT INTO `semesters` (`id`, `term_no`, `academic_year_start`, `created_at`) VALUES
-(1, 1, 2025, '2025-08-15 09:00:00'),
-(2, 2, 2025, '2026-01-10 09:00:00'),
-(3, 1, 2026, '2026-08-15 09:00:00');
+-- ID 1: HK1 2025-2026 (closed)
+-- ID 2: HK2 2025-2026 (closed)
+-- ID 3: HK1 2026-2027 (registration_open = 1)
+INSERT INTO `semesters` (`id`, `term_no`, `academic_year_start`, `registration_open`, `registration_close`, `created_at`) VALUES
+(1, 1, 2025, 0, NULL, '2025-08-15 09:00:00'),
+(2, 2, 2025, 0, NULL, '2026-01-10 09:00:00'),
+(3, 1, 2026, 1, NULL, '2026-08-15 09:00:00');
+
+-- 1b. Cấu hình Đăng ký Tín chỉ (Student Settings)
+INSERT INTO `student_settings` (`id`, `min_credits_per_semester`, `max_credits_per_semester`) VALUES
+(1, 1, 30);
 
 -- 2. Định mức Tín chỉ (Credit Rates)
 -- HK1 2025-2026: 800.000 VND
@@ -175,9 +181,14 @@ INSERT INTO `receipt_counters` (`day`, `last_no`) VALUES
 INSERT INTO `audit_log` (`user_id`, `action`, `entity`, `entity_id`, `payload`, `ip`, `created_at`) VALUES
 (1, 'seed_init', 'system', '0', '{"info": "Khởi tạo dữ liệu mẫu hệ thống"}', '127.0.0.1', '2026-08-01 08:00:00');
 
--- 10. Tài khoản Quản trị viên (Users)
-INSERT INTO `users` (`id`, `username`, `password_hash`, `full_name`, `role`, `failed_logins`, `locked_until`, `created_at`) VALUES
-(1, 'admin', '$2y$12$WDDv3BxKcciz9/102tWyPew3Qf6xlwna4PqzlcxODAzGGlaNOS5di', 'Quản trị viên Admin', 'admin', 0, NULL, '2026-08-15 08:00:00'),
-(2, 'staff01', '$2y$12$6Bqyi/l2k1lGDHWX3a0LOeS2.kS58BNx2OYM1zLmZX90jtuXUToU2', 'Cán bộ Staff 01', 'admin', 0, NULL, '2026-08-15 08:00:00');
+-- 10. Tài khoản Quản trị viên & Sinh viên (Users)
+INSERT INTO `users` (`id`, `username`, `password_hash`, `full_name`, `role`, `student_id`, `must_change_password`, `failed_logins`, `locked_until`, `created_at`) VALUES
+(1, 'admin', '$2y$12$WDDv3BxKcciz9/102tWyPew3Qf6xlwna4PqzlcxODAzGGlaNOS5di', 'Quản trị viên Admin', 'admin', NULL, 0, 0, NULL, '2026-08-15 08:00:00'),
+(2, 'staff01', '$2y$12$6Bqyi/l2k1lGDHWX3a0LOeS2.kS58BNx2OYM1zLmZX90jtuXUToU2', 'Cán bộ Staff 01', 'admin', NULL, 0, 0, NULL, '2026-08-15 08:00:00'),
+(3, 'sv001', '$2y$12$fNm91FOriyPX8Vvsawiz/.s/2gzxjmW1UxXCZy04j6X6Syf/rOfHO', 'Nguyễn Văn An', 'student', 1, 0, 0, NULL, '2026-08-20 08:00:00'),
+(4, 'sv002', '$2y$12$qgGMn2VxrgWnnF8hQ0eyH.AflhNZscPpLQdXO9lQxtx6VyOWu7lYO', 'Trần Thị Bình', 'student', 2, 0, 0, NULL, '2026-08-20 08:05:00'),
+(5, 'sv003', '$2y$12$6VLK7jresNIqWi8tcL701OSMOr2Me83v.//YF.9GCXKzoC4.YgeGS', 'Lê Hoàng Cường', 'student', 3, 0, 0, NULL, '2026-08-20 08:10:00'),
+(6, 'sv011', '$2y$12$PYbFLMuHGOY2XkjwLSamYO3WyHHw3UhTfP0x4Kpe7TfBIZgl/Cm3i', 'Ngô Quang Khải', 'student', 11, 0, 0, NULL, '2026-08-20 08:50:00'),
+(7, 'sv006', '$2y$12$.p5yi2xNLlTb9nl9FFo60ejbU2TZgdBsC2njfTbOloVBeUHYljrEG', 'Võ Minh Đức', 'student', 6, 1, 0, NULL, '2026-08-20 08:25:00');
 
 SET FOREIGN_KEY_CHECKS = 1;

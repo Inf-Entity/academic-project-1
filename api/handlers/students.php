@@ -29,10 +29,13 @@ function handle_students_routes(string $method, string $path, array $matches): v
         if (!is_search_query_empty_or_diacritics_only($rawQ)) {
             $norm = normalize_vietnamese($rawQ);
             $stmt = $db->prepare(
-                "SELECT id, student_code, full_name, class_name, created_at, updated_at
-                 FROM students
-                 WHERE student_code LIKE :code OR name_search LIKE :q
-                 ORDER BY id ASC"
+                "SELECT s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at,
+                        CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END AS has_account,
+                        u.username AS account_username
+                 FROM students s
+                 LEFT JOIN users u ON u.student_id = s.id
+                 WHERE s.student_code LIKE :code OR s.name_search LIKE :q
+                 ORDER BY s.id ASC"
             );
             $stmt->execute([
                 'code' => '%' . strtoupper(trim($rawQ)) . '%',
@@ -40,9 +43,12 @@ function handle_students_routes(string $method, string $path, array $matches): v
             ]);
         } else {
             $stmt = $db->query(
-                "SELECT id, student_code, full_name, class_name, created_at, updated_at
-                 FROM students
-                 ORDER BY id ASC"
+                "SELECT s.id, s.student_code, s.full_name, s.class_name, s.created_at, s.updated_at,
+                        CASE WHEN u.id IS NOT NULL THEN 1 ELSE 0 END AS has_account,
+                        u.username AS account_username
+                 FROM students s
+                 LEFT JOIN users u ON u.student_id = s.id
+                 ORDER BY s.id ASC"
             );
         }
         json_success($stmt->fetchAll());
@@ -273,6 +279,9 @@ function handle_students_routes(string $method, string $path, array $matches): v
             json_error('Không thể xóa sinh viên đã có dữ liệu học phí.', 'STUDENT_HAS_RECORDS', 409);
         }
 
+        // Xóa tài khoản sinh viên nếu có trước khi xóa hồ sơ sinh viên
+        $db->prepare("DELETE FROM users WHERE student_id = :id")->execute(['id' => $studentId]);
+
         $delStmt = $db->prepare("DELETE FROM students WHERE id = :id");
         $delStmt->execute(['id' => $studentId]);
 
@@ -283,4 +292,144 @@ function handle_students_routes(string $method, string $path, array $matches): v
 
         json_success(['message' => "Đã xóa sinh viên '{$student['full_name']}' thành công."]);
     }
+
+    // 7. POST /api/students/{id}/account (Tạo tài khoản sinh viên)
+    if (preg_match('#^/api/students/(\d+)/account$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $studentId = (int)$m[1];
+
+        $stmt = $db->prepare("SELECT id, student_code, full_name FROM students WHERE id = :id");
+        $stmt->execute(['id' => $studentId]);
+        $student = $stmt->fetch();
+        if (!$student) {
+            json_error('Không tìm thấy sinh viên.', 'NOT_FOUND', 404);
+        }
+
+        // Kiểm tra xem sinh viên đã có tài khoản chưa
+        $chkAccount = $db->prepare("SELECT id, username FROM users WHERE student_id = :id");
+        $chkAccount->execute(['id' => $studentId]);
+        if ($chkAccount->fetch()) {
+            json_error('Sinh viên này đã có tài khoản.', 'DUPLICATE_ACCOUNT', 409);
+        }
+
+        // Tên đăng nhập = mã sinh viên viết thường
+        $username = strtolower(trim($student['student_code']));
+
+        // Kiểm tra trùng username
+        $chkU = $db->prepare("SELECT id FROM users WHERE username = :u");
+        $chkU->execute(['u' => $username]);
+        if ($chkU->fetch()) {
+            json_error("Tên đăng nhập '{$username}' đã tồn tại trong hệ thống.", 'DUPLICATE_USERNAME', 409);
+        }
+
+        // Tạo mật khẩu tạm thời 12 ký tự ngẫu nhiên
+        $tempPassword = generate_student_temporary_password();
+        $passwordHash = password_hash($tempPassword, PASSWORD_DEFAULT);
+
+        $adminUser = get_session_user();
+        $adminId = $adminUser['id'] ?? null;
+
+        $insUser = $db->prepare(
+            "INSERT INTO users (username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until, created_at)
+             VALUES (:username, :hash, :full_name, 'student', :student_id, 1, 0, NULL, NOW())"
+        );
+        $insUser->execute([
+            'username'   => $username,
+            'hash'       => $passwordHash,
+            'full_name'  => $student['full_name'],
+            'student_id' => $studentId,
+        ]);
+
+        log_audit($adminId, 'create_account', 'students', (string)$studentId, [
+            'username'     => $username,
+            'student_code' => $student['student_code']
+        ]);
+
+        json_success([
+            'student_id'           => $studentId,
+            'username'             => $username,
+            'temporary_password'   => $tempPassword,
+            'must_change_password' => 1,
+            'message'              => 'Tạo tài khoản sinh viên thành công.'
+        ], 201);
+    }
+
+    // 8. POST /api/students/{id}/account/reset (Đặt lại mật khẩu sinh viên)
+    if (preg_match('#^/api/students/(\d+)/account/reset$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $studentId = (int)$m[1];
+
+        $stmt = $db->prepare("SELECT id, student_code, full_name FROM students WHERE id = :id");
+        $stmt->execute(['id' => $studentId]);
+        $student = $stmt->fetch();
+        if (!$student) {
+            json_error('Không tìm thấy sinh viên.', 'NOT_FOUND', 404);
+        }
+
+        $chkAccount = $db->prepare("SELECT id, username FROM users WHERE student_id = :id");
+        $chkAccount->execute(['id' => $studentId]);
+        $userRow = $chkAccount->fetch();
+        if (!$userRow) {
+            json_error('Sinh viên chưa có tài khoản.', 'ACCOUNT_NOT_FOUND', 404);
+        }
+
+        $tempPassword = generate_student_temporary_password();
+        $passwordHash = password_hash($tempPassword, PASSWORD_DEFAULT);
+
+        $adminUser = get_session_user();
+        $adminId = $adminUser['id'] ?? null;
+
+        $upStmt = $db->prepare(
+            "UPDATE users SET password_hash = :hash, must_change_password = 1, failed_logins = 0, locked_until = NULL WHERE id = :uid"
+        );
+        $upStmt->execute([
+            'hash' => $passwordHash,
+            'uid'  => $userRow['id']
+        ]);
+
+        log_audit($adminId, 'reset_account_password', 'students', (string)$studentId, [
+            'username'     => $userRow['username'],
+            'student_code' => $student['student_code']
+        ]);
+
+        json_success([
+            'student_id'           => $studentId,
+            'username'             => $userRow['username'],
+            'temporary_password'   => $tempPassword,
+            'must_change_password' => 1,
+            'message'              => 'Đặt lại mật khẩu sinh viên thành công.'
+        ], 200);
+    }
+}
+
+/**
+ * Sinh mật khẩu tạm thời 12 ký tự ngẫu nhiên (chữ hoa, chữ thường, số, ký tự đặc biệt) qua random_bytes
+ */
+function generate_student_temporary_password(): string {
+    $upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    $lower = 'abcdefghijkmnpqrstuvwxyz';
+    $digits = '23456789';
+    $symbols = '!@#$%^&*';
+    $all = $upper . $lower . $digits . $symbols;
+
+    $pwd = [
+        $upper[ord(random_bytes(1)) % strlen($upper)],
+        $lower[ord(random_bytes(1)) % strlen($lower)],
+        $digits[ord(random_bytes(1)) % strlen($digits)],
+        $symbols[ord(random_bytes(1)) % strlen($symbols)],
+    ];
+
+    $bytes = random_bytes(8);
+    for ($i = 0; $i < 8; $i++) {
+        $pwd[] = $all[ord($bytes[$i]) % strlen($all)];
+    }
+
+    for ($i = count($pwd) - 1; $i > 0; $i--) {
+        $j = ord(random_bytes(1)) % ($i + 1);
+        $tmp = $pwd[$i];
+        $pwd[$i] = $pwd[$j];
+        $pwd[$j] = $tmp;
+    }
+
+    return implode('', $pwd);
 }

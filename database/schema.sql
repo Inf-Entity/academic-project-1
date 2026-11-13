@@ -16,9 +16,10 @@ DROP TABLE IF EXISTS `ledger_entries`;
 DROP TABLE IF EXISTS `exemptions`;
 DROP TABLE IF EXISTS `fee_records`;
 DROP TABLE IF EXISTS `credit_rates`;
+DROP TABLE IF EXISTS `student_settings`;
+DROP TABLE IF EXISTS `users`;
 DROP TABLE IF EXISTS `students`;
 DROP TABLE IF EXISTS `semesters`;
-DROP TABLE IF EXISTS `users`;
 
 -- Tạo các bảng theo thứ tự bảng cha trước, bảng con sau (Parent-first order)
 
@@ -27,13 +28,15 @@ CREATE TABLE `semesters` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `term_no` TINYINT NOT NULL,
     `academic_year_start` SMALLINT NOT NULL,
+    `registration_open` TINYINT(1) NOT NULL DEFAULT 0,
+    `registration_close` DATE NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY `uq_semester` (`term_no`, `academic_year_start`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. Bảng Sinh viên (Students)
 CREATE TABLE `students` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `student_code` VARCHAR(12) NOT NULL UNIQUE,
     `full_name` VARCHAR(100) NOT NULL,
     `name_search` VARCHAR(255) NOT NULL,
@@ -49,10 +52,14 @@ CREATE TABLE `users` (
     `username` VARCHAR(50) NOT NULL UNIQUE,
     `password_hash` VARCHAR(255) NOT NULL,
     `full_name` VARCHAR(100) NOT NULL,
-    `role` ENUM('admin') NOT NULL DEFAULT 'admin',
+    `role` ENUM('admin', 'student') NOT NULL DEFAULT 'admin',
+    `student_id` BIGINT NULL UNIQUE,
+    `must_change_password` TINYINT(1) NOT NULL DEFAULT 0,
     `failed_logins` INT NOT NULL DEFAULT 0,
     `locked_until` DATETIME NULL,
-    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT `fk_users_students` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT `chk_user_role` CHECK ((`role` = 'student' AND `student_id` IS NOT NULL) OR (`role` = 'admin' AND `student_id` IS NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3b. Bảng Trạng thái Điều hướng Người dùng (User Nav State)
@@ -63,6 +70,16 @@ CREATE TABLE `user_nav_state` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`user_id`, `nav_key`),
     CONSTRAINT `fk_user_nav_state_users` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 3c. Bảng Cấu hình Đăng ký Tín chỉ Sinh viên (Student Settings - Singleton Row)
+CREATE TABLE `student_settings` (
+    `id` INT PRIMARY KEY DEFAULT 1,
+    `min_credits_per_semester` INT NOT NULL DEFAULT 1,
+    `max_credits_per_semester` INT NOT NULL DEFAULT 30,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT `chk_student_settings_id` CHECK (`id` = 1),
+    CONSTRAINT `chk_student_credits_range` CHECK (`min_credits_per_semester` >= 1 AND `max_credits_per_semester` >= `min_credits_per_semester`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Bảng Định mức Tín chỉ (Credit Rates)
@@ -78,7 +95,7 @@ CREATE TABLE `credit_rates` (
 -- 5. Bảng Hồ sơ Học phí (Fee Records)
 CREATE TABLE `fee_records` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
-    `student_id` INT NOT NULL,
+    `student_id` BIGINT NOT NULL,
     `semester_id` INT NOT NULL,
     `registered_credits` SMALLINT NOT NULL,
     `rate_snapshot` BIGINT NOT NULL,
@@ -121,6 +138,7 @@ CREATE TABLE `ledger_entries` (
     `reason` VARCHAR(200) NULL,
     `note` VARCHAR(255) NULL,
     `request_id` VARCHAR(50) NOT NULL UNIQUE,
+    `gateway_ref` VARCHAR(40) NULL UNIQUE,
     `created_by` INT NOT NULL,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX `idx_ledger_transfer_group_id` (`transfer_group_id`),

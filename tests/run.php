@@ -2168,6 +2168,509 @@ $pdo->prepare("DELETE FROM exemptions WHERE fee_record_id = :id")->execute(['id'
 $pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $frMkId]);
 $pdo->prepare("DELETE FROM students WHERE id = :id")->execute(['id' => $stMkId]);
 
+// ----------------------------------------------------------------------------
+// 22. KIỂM THỬ TÍNH NĂNG TÀI KHOẢN SINH VIÊN (STUDENT PORTAL & SECURITY)
+// ----------------------------------------------------------------------------
+suite_header("22. Phân quyền, Tạo tài khoản & Bảo mật Sinh viên (Parts 1-4)");
+
+// 22.1 Quản trị viên cấp tài khoản sinh viên & Đặt lại mật khẩu
+$sv011Current = $pdo->query("SELECT id, student_code FROM students WHERE student_code = 'SV011'")->fetch(PDO::FETCH_ASSOC);
+$sv011Id = (int)$sv011Current['id'];
+
+$createAccRes = $api->request('POST', "/students/{$sv011Id}/account");
+it("Admin cấp tài khoản cho SV011 thành công với mật khẩu tạm thời 12 ký tự (HTTP 201)", 
+    $createAccRes['status'] === 201 
+    && !empty($createAccRes['body']['data']['temporary_password'])
+    && strlen($createAccRes['body']['data']['temporary_password']) === 12
+    && $createAccRes['body']['data']['username'] === 'sv011'
+    && (int)$createAccRes['body']['data']['must_change_password'] === 1
+);
+
+$dupAccRes = $api->request('POST', "/students/{$sv011Id}/account");
+it("Tạo trùng tài khoản cho cùng sinh viên bị từ chối với HTTP 409 và thông báo quy định", 
+    $dupAccRes['status'] === 409 
+    && str_contains($dupAccRes['body']['error']['message'] ?? '', 'Sinh viên này đã có tài khoản')
+);
+
+$resetAccRes = $api->request('POST', "/students/{$sv011Id}/account/reset");
+it("Admin đặt lại mật khẩu cho sinh viên thành công (HTTP 200)", 
+    $resetAccRes['status'] === 200 
+    && !empty($resetAccRes['body']['data']['temporary_password'])
+    && strlen($resetAccRes['body']['data']['temporary_password']) === 12
+);
+
+// Chuẩn bị tài khoản sv011 với mật khẩu chuẩn Student@011 để kiểm thử đăng ký tín chỉ
+$hash011 = password_hash('Student@011', PASSWORD_DEFAULT);
+$pdo->prepare("UPDATE users SET password_hash = :h, must_change_password = 0 WHERE username = 'sv011'")->execute(['h' => $hash011]);
+
+// 22.2 Kiểm thử Đăng nhập & Đổi mật khẩu bắt buộc (sv006 với must_change_password = 1)
+$client006 = new ApiTestClient();
+$login006Res = $client006->login('sv006', 'Student@006');
+it("Sinh viên SV006 đăng nhập thành công với vai trò student (HTTP 200)", 
+    $login006Res['status'] === 200 
+    && $login006Res['body']['data']['role'] === 'student'
+    && (int)$login006Res['body']['data']['must_change_password'] === 1
+);
+
+// GET /api/me được phép khi must_change_password = 1
+$me006Res = $client006->request('GET', '/me');
+it("GET /api/me cho phép sinh viên đang có must_change_password = 1 truy cập (HTTP 200)", 
+    $me006Res['status'] === 200 && (int)$me006Res['body']['data']['must_change_password'] === 1
+);
+
+// Các endpoint sinh viên khác bị chặn 403 PASSWORD_CHANGE_REQUIRED
+$blockSemRes = $client006->request('GET', '/student/semesters');
+$blockDebtsRes = $client006->request('GET', '/student/debts');
+$blockHistRes = $client006->request('GET', '/student/history');
+it("Tất cả endpoint sinh viên khác trả về 403 PASSWORD_CHANGE_REQUIRED khi chưa đổi mật khẩu", 
+    $blockSemRes['status'] === 403 
+    && ($blockSemRes['body']['error']['code'] ?? '') === 'PASSWORD_CHANGE_REQUIRED'
+    && $blockDebtsRes['status'] === 403 
+    && ($blockDebtsRes['body']['error']['code'] ?? '') === 'PASSWORD_CHANGE_REQUIRED'
+    && $blockHistRes['status'] === 403 
+    && ($blockHistRes['body']['error']['code'] ?? '') === 'PASSWORD_CHANGE_REQUIRED'
+);
+
+// Đổi mật khẩu: từ chối tái sử dụng mật khẩu tạm thời
+$reuseRes = $client006->request('POST', '/student/password', [
+    'current_password'          => 'Student@006',
+    'new_password'              => 'Student@006',
+    'new_password_confirmation' => 'Student@006'
+]);
+it("Đổi mật khẩu từ chối tái sử dụng mật khẩu hiện tại / tạm thời với HTTP 400", 
+    $reuseRes['status'] === 400 && !empty($reuseRes['body']['error']['fields']['new_password'])
+);
+
+// Đổi mật khẩu: từ chối mật khẩu không đủ độ dài hoặc thiếu số/chữ
+$weakPwRes = $client006->request('POST', '/student/password', [
+    'current_password'          => 'Student@006',
+    'new_password'              => 'short',
+    'new_password_confirmation' => 'short'
+]);
+it("Đổi mật khẩu từ chối mật khẩu yếu (< 8 ký tự hoặc thiếu chữ/số) với HTTP 400", 
+    $weakPwRes['status'] === 400 && !empty($weakPwRes['body']['error']['fields']['new_password'])
+);
+
+// Đổi mật khẩu: từ chối xác nhận không khớp
+$mismatchPwRes = $client006->request('POST', '/student/password', [
+    'current_password'          => 'Student@006',
+    'new_password'              => 'NewPassword2026',
+    'new_password_confirmation' => 'Different2026'
+]);
+it("Đổi mật khẩu từ chối khi xác nhận mật khẩu không khớp với HTTP 400", 
+    $mismatchPwRes['status'] === 400 && !empty($mismatchPwRes['body']['error']['fields']['new_password_confirmation'])
+);
+
+// Đổi mật khẩu thành công
+$changePwRes = $client006->request('POST', '/student/password', [
+    'current_password'          => 'Student@006',
+    'new_password'              => 'NewPassword2026',
+    'new_password_confirmation' => 'NewPassword2026'
+]);
+$mustChangeAfter = (int)$pdo->query("SELECT must_change_password FROM users WHERE username = 'sv006'")->fetchColumn();
+it("Đổi mật khẩu thành công (HTTP 200) và cờ must_change_password được xóa về 0", 
+    $changePwRes['status'] === 200 && $mustChangeAfter === 0
+);
+
+// Sau khi đổi mật khẩu, truy cập endpoint sinh viên thành công
+$unblockDebtsRes = $client006->request('GET', '/student/debts');
+it("Sau khi đổi mật khẩu, sinh viên truy cập bình thường các chức năng (HTTP 200)", 
+    $unblockDebtsRes['status'] === 200
+);
+
+// 22.3 Đăng ký tín chỉ (Registration: SV011 chưa có hồ sơ)
+$client011 = new ApiTestClient();
+$client011->login('sv011', 'Student@011');
+
+// Xem danh sách học kỳ mở
+$sem011Res = $client011->request('GET', '/student/semesters');
+$openSems = $sem011Res['body']['data'] ?? [];
+$hasHk1_2627 = false;
+$hasClosedSem = false;
+foreach ($openSems as $os) {
+    if ($os['term_no'] === 1 && $os['academic_year_start'] === 2026) $hasHk1_2627 = true;
+    if ($os['term_no'] === 2 && $os['academic_year_start'] === 2025) $hasClosedSem = true;
+}
+it("GET /api/student/semesters trả về đúng học kỳ mở HK1 2026-2027 và không chứa học kỳ đóng", 
+    $sem011Res['status'] === 200 && $hasHk1_2627 && !$hasClosedSem
+);
+
+// Từ chối số tín chỉ < min (0) và > max (31)
+$belowMinRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 0,
+    'request_id'  => 'c1111111-0000-0000-0000-000000000001'
+]);
+it("Đăng ký tín chỉ từ chối credits < min (0) với HTTP 400 và trường error.fields.credits", 
+    $belowMinRes['status'] === 400 && !empty($belowMinRes['body']['error']['fields']['credits'])
+);
+
+$aboveMaxRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 31,
+    'request_id'  => 'c1111111-0000-0000-0000-000000000002'
+]);
+it("Đăng ký tín chỉ từ chối credits > max (31) với HTTP 400 và trường error.fields.credits", 
+    $aboveMaxRes['status'] === 400 && !empty($aboveMaxRes['body']['error']['fields']['credits'])
+);
+
+// Từ chối học kỳ đóng (HK2 2025-2026, semester_id = 2)
+$closedSemRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 2,
+    'credits'     => 15,
+    'request_id'  => 'c1111111-0000-0000-0000-000000000003'
+]);
+it("Đăng ký học kỳ đã đóng bị từ chối với HTTP 422 và thông báo 'Học kỳ này đã đóng đăng ký.'", 
+    $closedSemRes['status'] === 422 
+    && str_contains($closedSemRes['body']['error']['message'] ?? '', 'Học kỳ này đã đóng đăng ký')
+);
+
+// Đăng ký hợp lệ 15 tín chỉ vào HK1 2026-2027 (semester_id = 3)
+$regReqId = 'c1111111-0000-0000-0000-000000000004';
+$validRegRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 15,
+    'request_id'  => $regReqId
+]);
+it("Đăng ký tín chỉ hợp lệ tạo mới hồ sơ học phí với rate_snapshot và gross tính đúng (HTTP 201)", 
+    $validRegRes['status'] === 201 
+    && (int)$validRegRes['body']['data']['registered_credits'] === 15
+    && (int)$validRegRes['body']['data']['rate_snapshot'] === 850000
+    && (int)$validRegRes['body']['data']['gross_tuition'] === 12750000
+);
+$sv011NewFrId = (int)($validRegRes['body']['data']['id'] ?? $validRegRes['body']['data']['fee_record_id'] ?? 0);
+
+// Tính bất biến trùng lặp (Idempotent by request_id)
+$dupReqRegRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 15,
+    'request_id'  => $regReqId
+]);
+it("Gọi lại đăng ký với cùng request_id trả về HTTP 200 bản ghi cũ không tạo mới", 
+    $dupReqRegRes['status'] === 200 
+    && (int)($dupReqRegRes['body']['data']['id'] ?? $dupReqRegRes['body']['data']['fee_record_id'] ?? 0) === $sv011NewFrId
+);
+
+// Đăng ký trùng học kỳ với request_id khác trả về HTTP 409 DUPLICATE_FEE_RECORD
+$diffReqRegRes = $client011->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 15,
+    'request_id'  => 'c1111111-0000-0000-0000-000000000005'
+]);
+it("Đăng ký trùng học kỳ trả về HTTP 409 DUPLICATE_FEE_RECORD và existing_id", 
+    $diffReqRegRes['status'] === 409 
+    && ($diffReqRegRes['body']['error']['code'] ?? '') === 'DUPLICATE_FEE_RECORD'
+    && (int)($diffReqRegRes['body']['data']['existing_id'] ?? 0) === $sv011NewFrId
+);
+
+// Điều chỉnh số tín chỉ trước khi thanh toán (total_paid = 0): tính lại gross_tuition
+$changeCredRes = $client011->request('PUT', '/student/registrations/3', [
+    'credits'    => 20,
+    'request_id' => 'c1111111-0000-0000-0000-000000000006'
+]);
+it("Điều chỉnh số tín chỉ trước khi thanh toán thành công và tính lại gross = 20 x 850.000 = 17.000.000 (HTTP 200)", 
+    $changeCredRes['status'] === 200 
+    && (int)$changeCredRes['body']['data']['registered_credits'] === 20
+    && (int)$changeCredRes['body']['data']['gross_tuition'] === 17000000
+);
+
+// 22.4 Công nợ học phí (Tuition Debt & Isolation)
+$client001 = new ApiTestClient();
+$client001->login('sv001', 'Student@001');
+
+$debts001Res = $client001->request('GET', '/student/debts');
+$debts001Data = $debts001Res['body']['data'] ?? [];
+$outRecords001 = $debts001Data['outstanding_records'] ?? [];
+$allRecords001 = $debts001Data['all_records'] ?? [];
+$allOutGtZero = true;
+foreach ($outRecords001 as $r) {
+    if ($r['outstanding'] <= 0) $allOutGtZero = false;
+}
+it("GET /api/student/debts: outstanding_records chỉ chứa hồ sơ có nợ > 0 và tính tổng đúng", 
+    $debts001Res['status'] === 200 
+    && count($allRecords001) >= 2 
+    && $allOutGtZero
+    && (int)$debts001Data['total_outstanding'] === array_sum(array_column($allRecords001, 'outstanding'))
+);
+
+// Kiểm thử sinh viên chưa có hồ sơ thấy empty state
+$clientEmpty = new ApiTestClient();
+// SV004 không có hồ sơ học phí
+$hash004 = password_hash('Student@004', PASSWORD_DEFAULT);
+$sv004Row = $pdo->query("SELECT id, full_name FROM students WHERE student_code = 'SV004'")->fetch();
+$pdo->prepare("INSERT INTO users (username, password_hash, full_name, role, student_id, must_change_password) VALUES ('sv004', :h, :name, 'student', :stId, 0) ON DUPLICATE KEY UPDATE password_hash = :h2")->execute(['h' => $hash004, 'name' => $sv004Row['full_name'], 'stId' => $sv004Row['id'], 'h2' => $hash004]);
+$clientEmpty->login('sv004', 'Student@004');
+$emptyDebtRes = $clientEmpty->request('GET', '/student/debts');
+it("Sinh viên không có hồ sơ học phí thấy trạng thái trống (total_outstanding = 0, danh sách rỗng)", 
+    $emptyDebtRes['status'] === 200 
+    && (int)($emptyDebtRes['body']['data']['total_outstanding'] ?? -1) === 0
+    && empty($emptyDebtRes['body']['data']['outstanding_records'])
+    && empty($emptyDebtRes['body']['data']['all_records'])
+);
+
+// 22.5 Thanh toán học phí (Payment: SV003 có hồ sơ #3 nợ 8.200.000)
+$client003 = new ApiTestClient();
+$client003->login('sv003', 'Student@003');
+
+// Hồ sơ 3 nợ 8.200.000. Nộp vượt 1 VND (8.200.001) bị từ chối và không ghi dòng nào
+$leCountBefore = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+$overpayPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 8200001,
+    'method'     => 'Thẻ',
+    'request_id' => 'c3333333-0000-0000-0000-000000000001'
+]);
+$leCountAfterOverpay = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+it("Thanh toán vượt công nợ (balance + 1) bị từ chối với HTTP 422 và không ghi dòng sổ cái", 
+    $overpayPayRes['status'] === 422 
+    && str_contains($overpayPayRes['body']['error']['message'] ?? '', 'Số tiền vượt quá số còn nợ')
+    && $leCountAfterOverpay === $leCountBefore
+);
+
+// Từ chối phương thức 'Tiền mặt' cho sinh viên
+$cashPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 5000000,
+    'method'     => 'Tiền mặt',
+    'request_id' => 'c3333333-0000-0000-0000-000000000002'
+]);
+it("Sinh viên chọn phương thức 'Tiền mặt' bị từ chối với HTTP 400", 
+    $cashPayRes['status'] === 400 && !empty($cashPayRes['body']['error']['fields']['method'])
+);
+
+// Hồ sơ nộp thừa chặn thanh toán (SV001 hồ sơ #5 nộp thừa 1.000.000)
+// Section 5 completed refund #1, đặt lại pending để hồ sơ #5 khôi phục trạng thái nộp thừa và có pending refund
+$pdo->prepare("UPDATE refund_requests SET status = 'pending', completed_by = NULL, completed_at = NULL WHERE id = 1")->execute();
+$overpaidBlockRes = $client001->request('POST', '/student/fee-records/5/payments', [
+    'amount'     => 100000,
+    'method'     => 'Chuyển khoản',
+    'request_id' => 'c1111111-0000-0000-0000-000000000007'
+]);
+it("Hồ sơ đang nộp thừa chặn thanh toán với HTTP 422 và đúng thông báo quy định", 
+    $overpaidBlockRes['status'] === 422 
+    && str_contains($overpaidBlockRes['body']['error']['message'] ?? '', 'Hồ sơ đang có số tiền thừa')
+);
+
+// Mô phỏng cổng thanh toán thất bại: không ghi dòng nào và trả về 502
+$failGwPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 1000000,
+    'method'     => 'Thẻ',
+    'request_id' => 'c3333333-0000-0000-0000-000000000003'
+], ['X-Simulate-Gateway-Fail' => '1']);
+$leCountAfterGwFail = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+it("Cổng thanh toán thất bại trả về HTTP 502, thông báo quy định và không ghi dữ liệu sổ cái", 
+    $failGwPayRes['status'] === 502 
+    && str_contains($failGwPayRes['body']['error']['message'] ?? '', 'Thanh toán chưa được xử lý')
+    && $leCountAfterGwFail === $leCountBefore
+);
+
+// Thanh toán thiếu 1 đồng: (8.200.000 - 1 = 8.199.999) -> Trạng thái 'Thanh toán một phần'
+$partialPayReqId = 'c3333333-0000-0000-0000-000000000004';
+$partialPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 8199999,
+    'method'     => 'Thẻ',
+    'request_id' => $partialPayReqId
+]);
+$fr3SummaryPartial = fetch_fee_record_summary($pdo, 3);
+it("Thanh toán thiếu 1 đồng thành công (HTTP 201) và trạng thái hồ sơ là 'Partially Paid' (Thanh toán một phần)", 
+    $partialPayRes['status'] === 201 
+    && !empty($partialPayRes['body']['data']['receipt_no'])
+    && !empty($partialPayRes['body']['data']['gateway_ref'])
+    && $fr3SummaryPartial['status'] === 'Partially Paid'
+);
+
+// Trùng lặp request_id: không gọi lại gateway, trả về biên lai cũ
+$dupPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 8199999,
+    'method'     => 'Thẻ',
+    'request_id' => $partialPayReqId
+]);
+it("Gửi trùng request_id thanh toán trả về HTTP 200 và cùng số biên lai mà không trừ thêm tiền", 
+    $dupPayRes['status'] === 200 
+    && $dupPayRes['body']['data']['receipt_no'] === $partialPayRes['body']['data']['receipt_no']
+);
+
+// Thanh toán đúng số tiền còn nợ (1 VND) -> Trạng thái 'Fully Paid'
+$exactPayRes = $client003->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 1,
+    'method'     => 'Chuyển khoản',
+    'request_id' => 'c3333333-0000-0000-0000-000000000005'
+]);
+$fr3SummaryFully = fetch_fee_record_summary($pdo, 3);
+it("Thanh toán đúng số dư nợ còn lại thành công và hồ sơ chuyển thành 'Fully Paid' (Đã thanh toán đủ)", 
+    $exactPayRes['status'] === 201 
+    && $fr3SummaryFully['status'] === 'Fully Paid' 
+    && $fr3SummaryFully['outstanding'] === 0
+);
+
+// Kiểm tra điều chỉnh số tín chỉ sau khi đã có thanh toán (SV011 sau khi nộp tiền)
+$client011->request('POST', "/student/fee-records/{$sv011NewFrId}/payments", [
+    'amount'     => 1000000,
+    'method'     => 'Thẻ',
+    'request_id' => 'c1111111-0000-0000-0000-000000000008'
+]);
+$putAfterPayRes = $client011->request('PUT', '/student/registrations/3', [
+    'credits'    => 18,
+    'request_id' => 'c1111111-0000-0000-0000-000000000009'
+]);
+it("Điều chỉnh số tín chỉ sau khi đã có thanh toán bị từ chối với HTTP 422 và hướng dẫn liên hệ PĐT", 
+    $putAfterPayRes['status'] === 422 
+    && str_contains($putAfterPayRes['body']['error']['message'] ?? '', 'Đã có thanh toán, vui lòng liên hệ phòng đào tạo')
+);
+
+// 22.6 Lịch sử thanh toán & Số dư lũy kế (History)
+$client002 = new ApiTestClient();
+$client002->login('sv002', 'Student@002');
+$histRes = $client002->request('GET', '/student/history');
+$histEntries = $histRes['body']['data']['entries'] ?? [];
+it("GET /api/student/history trả về danh sách giao dịch kèm số dư lũy kế và nhãn tiếng Việt chuẩn", 
+    $histRes['status'] === 200 
+    && count($histEntries) >= 2 
+    && isset($histEntries[0]['running_balance'])
+    && isset($histEntries[0]['type_label'])
+);
+
+// Lịch sử từ chối to < from
+$badRangeRes = $client002->request('GET', '/student/history?from=2026-10-01&to=2026-09-01');
+it("Lịch sử từ chối khoảng ngày to < from với HTTP 400", 
+    $badRangeRes['status'] === 400 && !empty($badRangeRes['body']['error']['fields']['to'])
+);
+
+// Lịch sử từ chối khoảng thời gian tra cứu vượt quá 5 năm
+$over5YearsRes = $client002->request('GET', '/student/history?from=2020-01-01&to=2026-01-02');
+it("Lịch sử từ chối khoảng thời gian tra cứu vượt quá 5 năm với HTTP 400", 
+    $over5YearsRes['status'] === 400 
+    && !empty($over5YearsRes['body']['error']['fields']['to'])
+    && str_contains($over5YearsRes['body']['error']['message'] ?? '', '5 năm')
+);
+
+// Lịch sử hiển thị yêu cầu hoàn tiền đang chờ duyệt dưới dạng pending, không phải completed
+$hist001Res = $client001->request('GET', '/student/history');
+$pending001 = $hist001Res['body']['data']['pending_refunds'] ?? [];
+$entries001 = $hist001Res['body']['data']['entries'] ?? [];
+$pendingInEntries = false;
+foreach ($entries001 as $e) {
+    if (($e['entry_type'] ?? '') === 'refund' && ($e['status'] ?? '') === 'pending') {
+        $pendingInEntries = true;
+    }
+}
+it("Yêu cầu hoàn tiền đang chờ duyệt xuất hiện trong pending_refunds với nhãn quy định và không bị lẫn vào entries completed", 
+    $hist001Res['status'] === 200 
+    && count($pending001) >= 1 
+    && !$pendingInEntries
+    && ($pending001[0]['status_label'] ?? '') === 'Yêu cầu hoàn tiền đang chờ duyệt'
+);
+
+// In biên lai: biên lai của chính sinh viên thành công, biên lai của sinh viên khác trả về 404
+$sv003RcptNo = $exactPayRes['body']['data']['receipt_no'];
+$ownRcptRes = $client003->request('GET', "/receipts/{$sv003RcptNo}");
+it("Sinh viên tra cứu biên lai thanh toán của chính mình thành công (HTTP 200)", 
+    $ownRcptRes['status'] === 200 && ($ownRcptRes['body']['data']['receipt_no'] ?? '') === $sv003RcptNo
+);
+
+$otherRcptRes = $client001->request('GET', "/receipts/{$sv003RcptNo}");
+it("Sinh viên A tra cứu biên lai thanh toán của Sinh viên B trả về HTTP 404 cô lập hoàn toàn", 
+    $otherRcptRes['status'] === 404
+);
+
+// 22.7 Kiểm thử Cô lập dữ liệu & Ràng buộc bảo mật toàn diện (Security Checks)
+
+// 1. Sinh viên A truy cập hoặc nộp tiền vào hồ sơ của Sinh viên B trả về 404
+$otherPayRes = $client001->request('POST', '/student/fee-records/3/payments', [
+    'amount'     => 100000,
+    'method'     => 'Thẻ',
+    'request_id' => 'c1111111-9999-9999-9999-999999999999'
+]);
+it("Sinh viên A gửi yêu cầu nộp tiền vào hồ sơ của Sinh viên B trả về HTTP 404 (không lộ sự tồn tại)", 
+    $otherPayRes['status'] === 404
+);
+
+$otherEditReg = $client006->request('PUT', '/student/registrations/3', [
+    'credits'    => 20,
+    'request_id' => 'c1111111-9999-9999-9999-999999999998'
+]);
+it("Sinh viên A gửi yêu cầu điều chỉnh đăng ký chưa tồn tại (hoặc của sinh viên khác) trả về HTTP 404", 
+    $otherEditReg['status'] === 404
+);
+
+// 2. Yêu cầu sinh viên chứa trường student_id bị từ chối 400 (Whitelist validation)
+$unknownFieldRes = $client002->request('POST', '/student/registrations', [
+    'semester_id' => 3,
+    'credits'     => 15,
+    'student_id'  => 999,
+    'request_id'  => 'c2222222-8888-8888-8888-888888888888'
+]);
+it("Yêu cầu sinh viên chứa trường student_id trong body bị từ chối với HTTP 400 (trường không hợp lệ)", 
+    $unknownFieldRes['status'] === 400 && !empty($unknownFieldRes['body']['error']['fields']['student_id'])
+);
+
+// 3. Người dùng chưa đăng nhập gọi endpoint sinh viên nhận HTTP 401
+$unauthClient = new ApiTestClient();
+$unauthSemRes = $unauthClient->request('GET', '/student/semesters');
+$unauthDebtRes = $unauthClient->request('GET', '/student/debts');
+$unauthHistRes = $unauthClient->request('GET', '/student/history');
+it("Người dùng chưa đăng nhập gọi mọi endpoint /api/student/* đều nhận HTTP 401", 
+    $unauthSemRes['status'] === 401 && $unauthDebtRes['status'] === 401 && $unauthHistRes['status'] === 401
+);
+
+// 4. Quản trị viên (admin session) gọi endpoint sinh viên nhận HTTP 403
+$adminCallSem = $api->request('GET', '/student/semesters');
+$adminCallDebt = $api->request('GET', '/student/debts');
+$adminCallHist = $api->request('GET', '/student/history');
+$adminCallPw = $api->request('POST', '/student/password', ['current_password' => 'x', 'new_password' => 'x']);
+$adminCallReg = $api->request('POST', '/student/registrations', ['semester_id' => 3, 'credits' => 15, 'request_id' => 'adm-1']);
+$adminCallRcpt = $api->request('GET', '/student/receipts/PT-20260905-0001');
+it("Quản trị viên (admin session) gọi endpoint /api/student/* đều bị từ chối với HTTP 403", 
+    $adminCallSem['status'] === 403 
+    && $adminCallDebt['status'] === 403 
+    && $adminCallHist['status'] === 403
+    && $adminCallPw['status'] === 403
+    && $adminCallReg['status'] === 403
+    && $adminCallRcpt['status'] === 403
+);
+
+// 5. Sinh viên gọi endpoint quản trị nhận HTTP 403
+$studentCallAdmin = $client002->request('GET', '/students');
+$studentCallRefunds = $client002->request('GET', '/refunds');
+$studentCallReports = $client002->request('GET', '/reports/summary');
+it("Sinh viên gọi endpoint quản trị (/students, /refunds, /reports) đều bị từ chối với HTTP 403", 
+    $studentCallAdmin['status'] === 403 && $studentCallRefunds['status'] === 403 && $studentCallReports['status'] === 403
+);
+
+// 6. Yêu cầu POST/PUT của sinh viên không có CSRF Token hợp lệ bị từ chối HTTP 403
+$badCsrfClient = new ApiTestClient();
+$badCsrfClient->login('sv002', 'Student@002');
+$badCsrfClient->setCsrfToken('tampered_token_xyz');
+$noCsrfRes = $badCsrfClient->request('POST', '/student/fee-records/2/payments', [
+    'amount'     => 1000,
+    'method'     => 'Thẻ',
+    'request_id' => 'c2222222-7777-7777-7777-777777777777'
+]);
+it("Yêu cầu ghi của sinh viên thiếu hoặc sai CSRF Token bị từ chối với HTTP 403", 
+    $noCsrfRes['status'] === 403
+);
+
+// 7. Rate limit và khóa tài khoản sinh viên áp dụng đồng nhất (5 lần sai -> khóa 15 phút HTTP 409)
+$testLockClient = new ApiTestClient();
+for ($i = 0; $i < 5; $i++) {
+    $testLockClient->request('POST', '/login', [
+        'username' => 'sv003',
+        'password' => 'WrongPass@999'
+    ]);
+}
+$lockedLoginRes = $testLockClient->request('POST', '/login', [
+    'username' => 'sv003',
+    'password' => 'Student@003'
+]);
+$pdo->prepare("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE username = 'sv003'")->execute();
+it("Đăng nhập tài khoản sinh viên sai 5 lần liên tiếp kích hoạt khóa tài khoản 15 phút với HTTP 409", 
+    $lockedLoginRes['status'] === 409 
+    && ($lockedLoginRes['body']['error']['code'] ?? '') === 'ACCOUNT_LOCKED'
+);
+
+// Dọn dẹp dữ liệu kiểm thử
+$pdo->prepare("DELETE FROM audit_log WHERE user_id IN (SELECT id FROM users WHERE username = 'sv004')")->execute();
+$pdo->prepare("DELETE FROM users WHERE username = 'sv004'")->execute();
+$pdo->prepare("DELETE FROM ledger_entries WHERE fee_record_id = :id")->execute(['id' => $sv011NewFrId]);
+$pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $sv011NewFrId]);
 
 // ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ

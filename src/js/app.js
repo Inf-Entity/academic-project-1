@@ -488,18 +488,47 @@
 
     const loginScreen = document.getElementById('login-screen');
     const appContainer = document.getElementById('app-container');
-    const userDisplay = document.getElementById('current-user-display');
+    const studentAppContainer = document.getElementById('student-app-container');
+    const studentPwChangeScreen = document.getElementById('student-password-change-screen');
 
-    if (loginScreen) loginScreen.hidden = true;
-    if (appContainer) appContainer.hidden = false;
-    if (userDisplay) {
-      userDisplay.innerHTML = `👤 Quản trị viên: <strong>${escapeHTML(user.full_name || user.username)}</strong>`;
+    if (user.role === 'student') {
+      if (appContainer) appContainer.hidden = true;
+      if (loginScreen) loginScreen.hidden = true;
+
+      if (user.must_change_password) {
+        if (studentAppContainer) studentAppContainer.hidden = true;
+        if (studentPwChangeScreen) studentPwChangeScreen.hidden = false;
+        const pwForm = document.getElementById('student-password-form');
+        if (pwForm) {
+          pwForm.reset();
+          Api.clearFieldErrors(pwForm);
+        }
+      } else {
+        if (studentPwChangeScreen) studentPwChangeScreen.hidden = true;
+        if (studentAppContainer) studentAppContainer.hidden = false;
+        const studentDisplay = document.getElementById('student-user-display');
+        if (studentDisplay) {
+          studentDisplay.innerHTML = `👤 Sinh viên: <strong>${escapeHTML(user.full_name || user.username)} (${escapeHTML(user.username.toUpperCase())})</strong>`;
+        }
+        // Khởi tạo tab công nợ cho sinh viên
+        switchTab('student-debts');
+      }
+    } else if (user.role === 'admin') {
+      if (studentAppContainer) studentAppContainer.hidden = true;
+      if (studentPwChangeScreen) studentPwChangeScreen.hidden = true;
+      if (loginScreen) loginScreen.hidden = true;
+      if (appContainer) appContainer.hidden = false;
+
+      const userDisplay = document.getElementById('current-user-display');
+      if (userDisplay) {
+        userDisplay.innerHTML = `👤 Quản trị viên: <strong>${escapeHTML(user.full_name || user.username)}</strong>`;
+      }
+
+      startBadgePolling();
+
+      // Nạp dữ liệu khởi tạo
+      loadInitialData();
     }
-
-    startBadgePolling();
-
-    // Nạp dữ liệu khởi tạo
-    loadInitialData();
   }
 
   function onLoggedOut() {
@@ -510,10 +539,14 @@
 
     const loginScreen = document.getElementById('login-screen');
     const appContainer = document.getElementById('app-container');
+    const studentAppContainer = document.getElementById('student-app-container');
+    const studentPwChangeScreen = document.getElementById('student-password-change-screen');
     const receiptArea = document.getElementById('receipt-print-area');
 
     if (loginScreen) loginScreen.hidden = false;
     if (appContainer) appContainer.hidden = true;
+    if (studentAppContainer) studentAppContainer.hidden = true;
+    if (studentPwChangeScreen) studentPwChangeScreen.hidden = true;
     if (receiptArea) receiptArea.hidden = true;
 
     // Xóa form đăng nhập
@@ -672,6 +705,12 @@
   }
 
   function switchTab(tabName) {
+    if (AppState.currentUser?.role === 'student') {
+      const allowedStudentTabs = ['student-registration', 'student-debts', 'student-payments', 'student-history'];
+      if (!allowedStudentTabs.includes(tabName)) {
+        tabName = 'student-debts';
+      }
+    }
     AppState.currentTab = tabName;
 
     // Cập nhật nav tabs
@@ -715,6 +754,11 @@
       loadHistoryData();
       markHistoryAsSeen();
     }
+    // Phân hệ Cổng Sinh viên
+    else if (tabName === 'student-registration') loadStudentSemesters();
+    else if (tabName === 'student-debts') loadStudentDebts();
+    else if (tabName === 'student-payments') loadStudentPaymentOptions();
+    else if (tabName === 'student-history') loadStudentHistory();
   }
 
   /* ==========================================================================
@@ -971,6 +1015,7 @@
         <td class="text-center">
           <button type="button" class="btn btn-sm btn-outline-primary btn-edit-student" data-id="${s.id}">✏️ Sửa</button>
           <button type="button" class="btn btn-sm btn-outline-danger btn-del-student" data-id="${s.id}" data-name="${escapeHTML(s.full_name)}">🗑️ Xóa</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary btn-student-account" data-id="${s.id}" data-name="${escapeHTML(s.full_name)}" data-code="${escapeHTML(s.student_code)}" title="Cấp tài khoản / Đặt lại mật khẩu">🔑 Tài khoản</button>
         </td>
       </tr>
     `).join('');
@@ -981,6 +1026,9 @@
     });
     tbody.querySelectorAll('.btn-del-student').forEach(btn => {
       btn.addEventListener('click', () => confirmDeleteStudent(btn.dataset.id, btn.dataset.name));
+    });
+    tbody.querySelectorAll('.btn-student-account').forEach(btn => {
+      btn.addEventListener('click', () => openStudentAccountModal(btn.dataset.id, btn.dataset.name, btn.dataset.code));
     });
   }
 
@@ -2783,6 +2831,611 @@
   }
 
   /* ==========================================================================
+     11. PHÂN HỆ CỔNG SINH VIÊN (STUDENT PORTAL & ADMIN ACCOUNT MANAGEMENT)
+     ========================================================================== */
+
+  // Admin: Mở modal quản lý tài khoản sinh viên
+  function openStudentAccountModal(studentId, fullName, studentCode) {
+    const modal = document.getElementById('modal-student-account');
+    if (!modal) return;
+    AppState.selectedStudentAccount = { id: studentId, fullName, studentCode };
+
+    setElementText('sa-student-name', fullName);
+    setElementText('sa-student-code', studentCode);
+
+    const actionBox = document.getElementById('sa-action-box');
+    const resultBox = document.getElementById('sa-result-box');
+    if (actionBox) actionBox.style.display = 'block';
+    if (resultBox) resultBox.style.display = 'none';
+
+    modal.showModal();
+  }
+
+  async function handleStudentAccountCreate() {
+    const st = AppState.selectedStudentAccount;
+    if (!st) return;
+    const btn = document.getElementById('btn-sa-create');
+
+    try {
+      const res = await Api.post(`/students/${st.id}/account`, {}, btn);
+      if (res && res.ok && res.data) {
+        showStudentAccountResult(res.data);
+        showToast('Cấp tài khoản sinh viên thành công!');
+      }
+    } catch (err) {
+      if (err.status === 409) {
+        showToast('Sinh viên này đã có tài khoản. Bạn có thể chọn "Đặt lại mật khẩu".', 'error');
+      } else {
+        showToast(err.message || 'Lỗi cấp tài khoản sinh viên.', 'error');
+      }
+    }
+  }
+
+  async function handleStudentAccountReset() {
+    const st = AppState.selectedStudentAccount;
+    if (!st) return;
+    const btn = document.getElementById('btn-sa-reset');
+
+    try {
+      const res = await Api.post(`/students/${st.id}/account/reset`, {}, btn);
+      if (res && res.ok && res.data) {
+        showStudentAccountResult(res.data);
+        showToast('Đặt lại mật khẩu sinh viên thành công!');
+      }
+    } catch (err) {
+      showToast(err.message || 'Lỗi đặt lại mật khẩu.', 'error');
+    }
+  }
+
+  function showStudentAccountResult(data) {
+    const actionBox = document.getElementById('sa-action-box');
+    const resultBox = document.getElementById('sa-result-box');
+    if (actionBox) actionBox.style.display = 'none';
+    if (resultBox) {
+      setElementText('sa-res-username', data.username || '');
+      setElementText('sa-res-password', data.temporary_password || '');
+      resultBox.style.display = 'block';
+    }
+  }
+
+  function copyStudentPasswordToClipboard() {
+    const pwEl = document.getElementById('sa-res-password');
+    const btn = document.getElementById('btn-sa-copy-pw');
+    if (!pwEl || !pwEl.textContent) return;
+
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(pwEl.textContent).then(() => {
+        if (btn) {
+          const oldText = btn.textContent;
+          btn.textContent = '✓ Đã sao chép!';
+          setTimeout(() => { btn.textContent = oldText; }, 2000);
+        }
+      });
+    } else {
+      showToast(`Mật khẩu tạm: ${pwEl.textContent}`);
+    }
+  }
+
+  // Đổi mật khẩu bắt buộc cho sinh viên
+  async function handleStudentPasswordSubmit(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const form = document.getElementById('student-password-form');
+    const btn = document.getElementById('btn-student-change-pw');
+    const errBanner = document.getElementById('change-pw-general-error');
+    if (errBanner) { errBanner.hidden = true; errBanner.textContent = ''; }
+    Api.clearFieldErrors(form);
+
+    const currentPassword = form.current_password.value;
+    const newPassword = form.new_password.value;
+    const newPasswordConfirmation = form.new_password_confirmation.value;
+
+    const fields = {};
+    if (!currentPassword) {
+      fields.current_password = 'Vui lòng nhập mật khẩu hiện tại.';
+    }
+    if (!newPassword) {
+      fields.new_password = 'Vui lòng nhập mật khẩu mới.';
+    } else if (newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      fields.new_password = 'Mật khẩu mới phải có ít nhất 8 ký tự, bao gồm chữ cái và chữ số.';
+    }
+    if (!newPasswordConfirmation) {
+      fields.new_password_confirmation = 'Vui lòng xác nhận mật khẩu mới.';
+    } else if (newPassword !== newPasswordConfirmation) {
+      fields.new_password_confirmation = 'Xác nhận mật khẩu mới không khớp.';
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
+    try {
+      const res = await Api.post('/student/password', {
+        current_password: currentPassword,
+        new_password: newPassword,
+        new_password_confirmation: newPasswordConfirmation
+      }, btn);
+
+      if (res && res.ok) {
+        showToast('Đổi mật khẩu thành công! Chào mừng bạn đến với cổng sinh viên.');
+        if (AppState.currentUser) {
+          AppState.currentUser.must_change_password = 0;
+          onLoginSuccess(AppState.currentUser);
+        } else {
+          checkAuthSession();
+        }
+      }
+    } catch (err) {
+      if (err.fields && Object.keys(err.fields).length > 0) {
+        Api.renderFieldErrors(form, err.fields);
+      } else {
+        showToast(err.message || 'Lỗi đổi mật khẩu.', 'error');
+      }
+      if (errBanner) {
+        errBanner.textContent = err.message || 'Lỗi đổi mật khẩu.';
+        errBanner.hidden = false;
+        errBanner.style.display = 'block';
+      }
+    }
+  }
+
+  // 1. Sinh viên: Đăng ký tín chỉ
+  async function loadStudentSemesters() {
+    const listEl = document.getElementById('student-semesters-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="text-center text-muted" style="padding: 2rem;">Đang tải danh sách học kỳ mở...</div>';
+
+    try {
+      const res = await Api.get('/student/semesters');
+      if (!res || !res.ok) throw new Error(res.error?.message || 'Không thể tải học kỳ.');
+      const sems = res.data || [];
+      AppState.studentSemesters = sems;
+
+      if (sems.length === 0) {
+        listEl.innerHTML = '<div class="empty-state" style="padding: 3rem 1rem; text-align: center; background: #fff; border-radius: 8px; border: 1px dashed #cbd5e1;"><p style="font-size: 1.1rem; color: #64748b;">Hiện không có học kỳ nào đang mở đăng ký tín chỉ.</p></div>';
+        return;
+      }
+
+      listEl.innerHTML = sems.map(s => {
+        const reg = s.current_registration;
+        const isRegistered = !!reg;
+        const creditsVal = isRegistered ? reg.registered_credits : (s.min_credits || 1);
+        const rate = s.price_per_credit || 0;
+        const hasPaid = isRegistered && (Number(reg.total_paid) > 0);
+        const exemptionAmount = reg ? Number(reg.exemption_amount || 0) : 0;
+        const initialGross = Calc.calculateGross(creditsVal, rate);
+        const initialNet = Calc.calculateNetDue(initialGross, exemptionAmount);
+
+        return `
+          <div class="semester-card" id="sem-card-${s.id}">
+            <div class="semester-card-header">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <h3>${escapeHTML(s.label)}</h3>
+                <span class="badge badge-success">Đang mở đăng ký</span>
+              </div>
+              ${s.registration_close ? `<small class="text-muted" style="display: block; margin-top: 0.25rem;">Hạn chót đăng ký: <strong>${Calc.formatDateVN(s.registration_close)}</strong></small>` : ''}
+            </div>
+
+            <div class="semester-details">
+              <p style="margin: 0.25rem 0;">Định mức học phí: <strong>${Calc.formatVND(rate)} / tín chỉ</strong></p>
+              <p style="margin: 0.25rem 0;">Giới hạn tín chỉ: <strong>Từ ${s.min_credits} đến ${s.max_credits} tín chỉ</strong></p>
+            </div>
+
+            ${isRegistered ? `
+              <div class="semester-reg-status">
+                <strong style="color: #0369a1;">Trạng thái đăng ký hiện tại:</strong>
+                <ul style="margin: 0.5rem 0 0; padding-left: 1.25rem; font-size: 0.875rem;">
+                  <li>Số tín chỉ đã đăng ký: <strong>${reg.registered_credits} tín chỉ</strong></li>
+                  <li>Học phí gốc (Gross): <strong>${Calc.formatVND(reg.gross_tuition)}</strong></li>
+                  <li>Học phí thực nộp (Net): <strong>${Calc.formatVND(reg.net_due)}</strong></li>
+                  <li>Đã thanh toán: <strong>${Calc.formatVND(reg.total_paid)}</strong></li>
+                </ul>
+              </div>
+            ` : ''}
+
+            ${hasPaid ? `
+              <div class="alert-banner alert-warning" style="display: block; margin: 0; font-size: 0.875rem;">
+                ⚠️ Đã có thanh toán, vui lòng liên hệ phòng đào tạo để điều chỉnh.
+              </div>
+            ` : `
+              <form class="student-reg-form" data-semester-id="${s.id}" data-rate="${rate}" data-min="${s.min_credits}" data-max="${s.max_credits}" data-exempt="${exemptionAmount}" data-is-edit="${isRegistered ? '1' : '0'}" novalidate>
+                <div class="form-error-summary" role="alert" hidden></div>
+                <div class="form-group">
+                  <label for="student-credits-${s.id}">Số tín chỉ đăng ký (Từ ${s.min_credits} đến ${s.max_credits} tín chỉ) <span class="required">*</span></label>
+                  <input type="number" id="student-credits-${s.id}" name="credits" class="form-control student-credits-input" value="${creditsVal}" min="${s.min_credits}" max="${s.max_credits}" step="1" required aria-describedby="student-credits-${s.id}-error">
+                  <span id="student-credits-${s.id}-error" class="error-msg" aria-live="polite"></span>
+                </div>
+
+                <div class="semester-calc-preview" style="margin-bottom: 1rem;">
+                  <div style="margin-bottom: 0.25rem;"><span class="text-muted">Học phí gốc tạm tính (Gross):</span> <strong class="credits-preview-gross" style="color: #1d4ed8; font-size: 1.05rem;">${Calc.formatVND(initialGross)}</strong></div>
+                  <div><span class="text-muted">Học phí thực nộp tạm tính (Net):</span> <strong class="credits-preview-net" style="color: #059669; font-size: 1.05rem;">${Calc.formatVND(initialNet)}</strong></div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-submit-registration">
+                  ${isRegistered ? '🔄 Cập nhật số tín chỉ' : '✍️ Xác nhận Đăng ký Tín chỉ'}
+                </button>
+              </form>
+            `}
+          </div>
+        `;
+      }).join('');
+
+      listEl.querySelectorAll('.student-reg-form').forEach(form => {
+        const semId = form.dataset.semesterId;
+        const rate = Number(form.dataset.rate) || 0;
+        const min = Number(form.dataset.min) || 1;
+        const max = Number(form.dataset.max) || 30;
+        const exemptAmt = Number(form.dataset.exempt) || 0;
+        const input = form.querySelector('.student-credits-input');
+        const previewGross = form.querySelector('.credits-preview-gross');
+        const previewNet = form.querySelector('.credits-preview-net');
+        const isEdit = form.dataset.isEdit === '1';
+
+        input.addEventListener('input', () => {
+          Api.clearFieldError(form, input, 'credits');
+          const val = parseInt(input.value, 10);
+          if (!isNaN(val) && val >= 0) {
+            const g = Calc.calculateGross(val, rate);
+            const n = Calc.calculateNetDue(g, exemptAmt);
+            if (previewGross) previewGross.textContent = Calc.formatVND(g);
+            if (previewNet) previewNet.textContent = Calc.formatVND(n);
+          } else {
+            if (previewGross) previewGross.textContent = '0 ₫';
+            if (previewNet) previewNet.textContent = '0 ₫';
+          }
+        });
+
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          Api.clearFieldErrors(form);
+          const val = parseInt(input.value, 10);
+          if (isNaN(val) || val < min || val > max) {
+            Api.setFieldError(form, input, `Số tín chỉ phải từ ${min} đến ${max}.`, 'credits');
+            return;
+          }
+
+          const submitBtn = form.querySelector('.btn-submit-registration');
+          const requestId = Api.generateUUID();
+
+          try {
+            let res;
+            if (isEdit) {
+              res = await Api.put(`/student/registrations/${semId}`, {
+                credits: val,
+                request_id: requestId
+              }, submitBtn);
+            } else {
+              res = await Api.post('/student/registrations', {
+                semester_id: Number(semId),
+                credits: val,
+                request_id: requestId
+              }, submitBtn);
+            }
+
+            if (res && res.ok) {
+              showToast(isEdit ? 'Điều chỉnh số tín chỉ thành công!' : 'Đăng ký tín chỉ thành công!');
+              loadStudentSemesters();
+            }
+          } catch (err) {
+            if (err.fields && Object.keys(err.fields).length > 0) {
+              Api.renderFieldErrors(form, err.fields);
+            } else {
+              showToast(err.message || 'Lỗi đăng ký tín chỉ.', 'error');
+            }
+          }
+        });
+      });
+    } catch (err) {
+      listEl.innerHTML = `<div class="error-banner" role="alert" style="display:block;">${escapeHTML(err.message || 'Lỗi tải danh sách học kỳ.')}</div>`;
+    }
+  }
+
+  // 2. Sinh viên: Công nợ học phí
+  async function loadStudentDebts() {
+    const totalOutstandingEl = document.getElementById('student-total-outstanding');
+    const unpaidBody = document.getElementById('student-unpaid-debts-body');
+    const allBody = document.getElementById('student-all-debts-body');
+    if (!unpaidBody || !allBody) return;
+
+    unpaidBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">Đang tải công nợ...</td></tr>';
+    allBody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Đang tải hồ sơ học phí...</td></tr>';
+
+    try {
+      const res = await Api.get('/student/debts');
+      if (!res || !res.ok) throw new Error(res.error?.message || 'Không thể tải công nợ.');
+      const data = res.data || {};
+      AppState.studentDebts = data;
+
+      if (totalOutstandingEl) {
+        totalOutstandingEl.textContent = Calc.formatVND(data.total_outstanding || 0);
+      }
+
+      const unpaidRecords = data.outstanding_records || [];
+      if (unpaidRecords.length === 0) {
+        unpaidBody.innerHTML = '<tr><td colspan="10" class="text-center text-success" style="padding: 2rem;">🎉 Bạn không có khoản nợ học phí nào cần thanh toán!</td></tr>';
+      } else {
+        unpaidBody.innerHTML = unpaidRecords.map(r => {
+          let statusBadge = 'badge-warning';
+          if (r.status === 'Chưa thanh toán') statusBadge = 'badge-danger';
+          else if (r.status === 'Thanh toán một phần') statusBadge = 'badge-warning';
+
+          const exemptionText = r.exemption_amount > 0 
+            ? `<span title="${escapeHTML(r.exemption_reason || '')}">${Calc.formatVND(r.exemption_amount)}${r.exemption_reason ? ` (${escapeHTML(r.exemption_reason)})` : ''}</span>`
+            : '-';
+
+          return `
+            <tr>
+              <td><strong>${escapeHTML(r.semester_label)}</strong></td>
+              <td class="text-right">${r.registered_credits}</td>
+              <td class="text-right">${Calc.formatVND(r.rate_snapshot)}</td>
+              <td class="text-right">${Calc.formatVND(r.gross_tuition)}</td>
+              <td class="text-right">${exemptionText}</td>
+              <td class="text-right"><strong>${Calc.formatVND(r.net_due)}</strong></td>
+              <td class="text-right">${Calc.formatVND(r.total_paid)}</td>
+              <td class="text-right" style="color: #ef4444; font-weight: bold;">${Calc.formatVND(r.outstanding)}</td>
+              <td class="text-center"><span class="badge ${statusBadge}">${escapeHTML(r.status)}</span></td>
+              <td class="text-center">
+                <button type="button" class="btn btn-sm btn-success btn-pay-now" data-fee-id="${r.id}" data-balance="${r.outstanding}">
+                  💳 Nộp ngay
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        unpaidBody.querySelectorAll('.btn-pay-now').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const feeId = btn.dataset.feeId;
+            const balance = btn.dataset.balance;
+            switchTab('student-payments');
+            setTimeout(() => {
+              const select = document.getElementById('student-pay-fee-record');
+              const amountInput = document.getElementById('student-pay-amount');
+              if (select) {
+                select.value = feeId;
+                select.dispatchEvent(new Event('change'));
+              }
+              if (amountInput) {
+                amountInput.value = balance;
+              }
+            }, 50);
+          });
+        });
+      }
+
+      const allRecords = data.all_records || [];
+      if (allRecords.length === 0) {
+        allBody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Chưa có hồ sơ học phí nào.</td></tr>';
+      } else {
+        allBody.innerHTML = allRecords.map(r => {
+          let statusBadge = 'badge-secondary';
+          if (r.status === 'Đã thanh toán đủ') statusBadge = 'badge-success';
+          else if (r.status === 'Thanh toán một phần') statusBadge = 'badge-warning';
+          else if (r.status === 'Chưa thanh toán') statusBadge = 'badge-danger';
+
+          const exemptionText = r.exemption_amount > 0 
+            ? `<span title="${escapeHTML(r.exemption_reason || '')}">${Calc.formatVND(r.exemption_amount)}${r.exemption_reason ? ` (${escapeHTML(r.exemption_reason)})` : ''}</span>`
+            : '-';
+
+          return `
+            <tr>
+              <td><strong>${escapeHTML(r.semester_label)}</strong></td>
+              <td class="text-right">${r.registered_credits}</td>
+              <td class="text-right">${Calc.formatVND(r.rate_snapshot)}</td>
+              <td class="text-right">${Calc.formatVND(r.gross_tuition)}</td>
+              <td class="text-right">${exemptionText}</td>
+              <td class="text-right"><strong>${Calc.formatVND(r.net_due)}</strong></td>
+              <td class="text-right">${Calc.formatVND(r.total_paid)}</td>
+              <td class="text-right">${Calc.formatVND(r.outstanding)}</td>
+              <td class="text-center">
+                <span class="badge ${statusBadge}">${escapeHTML(r.status)}</span>
+                ${r.is_overpaid ? `<span class="badge badge-warning" style="display:block; margin-top:2px;">Nộp thừa ${Calc.formatVND(r.overpaid_amount)}</span>` : ''}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    } catch (err) {
+      showToast(err.message || 'Lỗi tải công nợ.', 'error');
+    }
+  }
+
+  // 3. Sinh viên: Thanh toán học phí
+  async function loadStudentPaymentOptions() {
+    const select = document.getElementById('student-pay-fee-record');
+    const amountInput = document.getElementById('student-pay-amount');
+    const hint = document.getElementById('student-pay-max-hint');
+    const successBox = document.getElementById('student-pay-success-box');
+    const form = document.getElementById('student-payment-form');
+    if (successBox) successBox.style.display = 'none';
+    if (form) { form.reset(); Api.clearFieldErrors(form); }
+
+    try {
+      const res = await Api.get('/student/debts');
+      if (!res || !res.ok) return;
+      const outstanding = res.data?.outstanding_records || [];
+      if (!select) return;
+
+      select.innerHTML = '<option value="">-- Chọn học kỳ còn nợ --</option>' + 
+        outstanding.map(r => `<option value="${r.id}" data-balance="${r.outstanding}">${escapeHTML(r.semester_label)} - Còn nợ: ${Calc.formatVND(r.outstanding)}</option>`).join('');
+
+      select.onchange = () => {
+        const opt = select.options[select.selectedIndex];
+        const bal = opt ? parseInt(opt.dataset.balance, 10) : 0;
+        if (amountInput && bal > 0) {
+          amountInput.value = bal;
+          amountInput.max = bal;
+        }
+        if (hint) {
+          hint.textContent = bal > 0 ? `Số tiền tối đa có thể nộp: ${Calc.formatVND(bal)}` : 'Số tiền không được vượt quá số dư còn nợ.';
+        }
+      };
+    } catch (e) {
+      console.warn('Lỗi tải danh sách hồ sơ cần thanh toán:', e);
+    }
+  }
+
+  async function handleStudentPaymentSubmit(e) {
+    if (e && typeof e.preventDefault === 'function') e.preventDefault();
+    const form = document.getElementById('student-payment-form');
+    const btn = document.getElementById('btn-student-submit-pay');
+    const errBanner = document.getElementById('student-pay-general-error');
+    const successBox = document.getElementById('student-pay-success-box');
+    if (errBanner) { errBanner.hidden = true; errBanner.textContent = ''; }
+    if (successBox) successBox.style.display = 'none';
+    Api.clearFieldErrors(form);
+
+    const feeRecordId = form.fee_record_id.value;
+    const rawAmount = form.amount.value.trim();
+    const method = form.student_pay_method.value;
+
+    const fields = {};
+    if (!feeRecordId) {
+      fields.fee_record_id = 'Vui lòng chọn khoản học phí cần thanh toán.';
+    }
+    const amount = parseInt(rawAmount, 10);
+    if (!rawAmount || isNaN(amount) || amount <= 0) {
+      fields.amount = 'Số tiền phải là số nguyên dương.';
+    }
+
+    if (Object.keys(fields).length > 0) {
+      Api.renderFieldErrors(form, fields);
+      return;
+    }
+
+    const requestId = Api.generateUUID();
+
+    try {
+      const res = await Api.post(`/student/fee-records/${feeRecordId}/payments`, {
+        amount: amount,
+        method: method,
+        request_id: requestId
+      }, btn);
+
+      if (res && res.ok && res.data) {
+        showToast('Thanh toán học phí thành công!');
+        if (successBox) {
+          document.getElementById('sp-gw-ref').textContent = res.data.gateway_ref || 'GW-N/A';
+          document.getElementById('sp-receipt-no').textContent = res.data.receipt_no || '';
+          document.getElementById('sp-amount').textContent = Calc.formatVND(res.data.amount || amount);
+          successBox.style.display = 'block';
+
+          const viewRcptBtn = document.getElementById('btn-student-view-receipt');
+          if (viewRcptBtn) {
+            viewRcptBtn.onclick = () => openReceiptView(res.data.receipt_no);
+          }
+        }
+        loadStudentPaymentOptions();
+      }
+    } catch (err) {
+      if (err.fields && Object.keys(err.fields).length > 0) {
+        Api.renderFieldErrors(form, err.fields);
+      } else {
+        showToast(err.message || 'Lỗi xử lý thanh toán.', 'error');
+      }
+      if (errBanner) {
+        errBanner.textContent = err.message || 'Lỗi xử lý thanh toán.';
+        errBanner.hidden = false;
+        errBanner.style.display = 'block';
+      }
+    }
+  }
+
+  // 4. Sinh viên: Lịch sử thanh toán
+  async function loadStudentHistory() {
+    const tbody = document.getElementById('student-history-table-body');
+    const pendingAlert = document.getElementById('student-pending-refund-alert');
+    const pendingContent = document.getElementById('student-pending-refund-content');
+    const fromInput = document.getElementById('student-hist-from');
+    const toInput = document.getElementById('student-hist-to');
+    const typeSelect = document.getElementById('student-hist-type');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Đang tải lịch sử thanh toán...</td></tr>';
+
+    const from = fromInput ? fromInput.value : '';
+    const to = toInput ? toInput.value : '';
+    const type = typeSelect ? typeSelect.value : '';
+
+    if (from && to && to < from) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Đến ngày không được nhỏ hơn từ ngày.</td></tr>';
+      if (toInput) Api.setFieldError(null, toInput, 'Đến ngày không được nhỏ hơn từ ngày.', 'to');
+      return;
+    }
+
+    if (from && to) {
+      const dFrom = new Date(from);
+      const dTo = new Date(to);
+      const diffYears = (dTo - dFrom) / (1000 * 60 * 60 * 24 * 365.25);
+      if (diffYears > 5) {
+        showToast('Khoảng thời gian tra cứu không được vượt quá 5 năm.', 'error');
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Khoảng thời gian tra cứu không được vượt quá 5 năm.</td></tr>';
+        return;
+      }
+    }
+
+    let query = [];
+    if (from) query.push(`from=${encodeURIComponent(from)}`);
+    if (to) query.push(`to=${encodeURIComponent(to)}`);
+    if (type) query.push(`type=${encodeURIComponent(type)}`);
+    const qs = query.length > 0 ? '?' + query.join('&') : '';
+
+    try {
+      const res = await Api.get(`/student/history${qs}`);
+      if (!res || !res.ok) throw new Error(res.error?.message || 'Không thể tải lịch sử.');
+      const data = res.data || {};
+      const entries = data.entries || [];
+      const pendingRefunds = data.pending_refunds || [];
+
+      if (pendingAlert && pendingContent) {
+        if (pendingRefunds.length > 0) {
+          pendingContent.innerHTML = pendingRefunds.map(p => 
+            `<div style="font-size: 0.9rem;">• ${escapeHTML(p.status_label)}: <strong>${Calc.formatVND(p.amount)}</strong> (Học kỳ: ${escapeHTML(p.semester_label)}, Tạo lúc: ${Calc.formatDateVN(p.created_at)})</div>`
+          ).join('');
+          pendingAlert.style.display = 'block';
+        } else {
+          pendingAlert.style.display = 'none';
+        }
+      }
+
+      if (entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Không có giao dịch nào phù hợp với điều kiện tìm kiếm.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = entries.map(e => {
+        const isPayment = (e.entry_type === 'payment');
+        return `
+          <tr>
+            <td>${Calc.formatDateVN(e.entry_date)}</td>
+            <td><strong>${escapeHTML(e.semester_label)}</strong></td>
+            <td><code>${escapeHTML(e.receipt_no || e.gateway_ref || '-')}</code></td>
+            <td class="text-right font-weight-bold">${Calc.formatVND(e.amount)}</td>
+            <td>${escapeHTML(e.method || '-')}</td>
+            <td class="text-center"><span class="badge badge-info">${escapeHTML(e.type_label || e.entry_type)}</span></td>
+            <td class="text-right">${Calc.formatVND(e.running_balance)}</td>
+            <td class="text-center">
+              ${isPayment && e.receipt_no ? `
+                <button type="button" class="btn btn-sm btn-outline-primary btn-print-receipt" data-receipt-no="${e.receipt_no}">
+                  🖨️ In biên lai
+                </button>
+              ` : '-'}
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      tbody.querySelectorAll('.btn-print-receipt').forEach(btn => {
+        btn.addEventListener('click', () => {
+          openReceiptView(btn.dataset.receiptNo);
+        });
+      });
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">${escapeHTML(err.message || 'Lỗi tải lịch sử.')}</td></tr>`;
+    }
+  }
+
+  /* ==========================================================================
      12. KHỞI TẠO VÀ GẮN SỰ KIỆN (INITIALIZATION)
      ========================================================================== */
 
@@ -3153,6 +3806,42 @@
     bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-semester'), () => null, 'semester');
     bindInlineValidation(document.getElementById('search-filter-form'), document.getElementById('ledger-filter-status'), () => null, 'status');
     bindInlineValidation(null, document.getElementById('report-semester-filter'), () => null, 'semester');
+
+    // Sự kiện Cổng sinh viên
+    document.getElementById('btn-student-logout')?.addEventListener('click', handleLogout);
+    document.getElementById('btn-change-pw-logout')?.addEventListener('click', handleLogout);
+    document.getElementById('student-password-form')?.addEventListener('submit', handleStudentPasswordSubmit);
+    document.getElementById('student-payment-form')?.addEventListener('submit', handleStudentPaymentSubmit);
+    document.getElementById('btn-student-pay-another')?.addEventListener('click', () => {
+      const successBox = document.getElementById('student-pay-success-box');
+      if (successBox) successBox.style.display = 'none';
+      loadStudentPaymentOptions();
+    });
+    document.getElementById('student-history-filter-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      loadStudentHistory();
+    });
+    document.getElementById('btn-reset-student-history')?.addEventListener('click', () => {
+      document.getElementById('student-history-filter-form').reset();
+      loadStudentHistory();
+    });
+
+    // Sự kiện Modal Quản lý Tài khoản Sinh viên (Admin)
+    document.getElementById('btn-close-student-account-modal')?.addEventListener('click', () => document.getElementById('modal-student-account')?.close());
+    document.getElementById('btn-cancel-student-account')?.addEventListener('click', () => document.getElementById('modal-student-account')?.close());
+    document.getElementById('btn-sa-create')?.addEventListener('click', handleStudentAccountCreate);
+    document.getElementById('btn-sa-reset')?.addEventListener('click', handleStudentAccountReset);
+    document.getElementById('btn-sa-copy-pw')?.addEventListener('click', copyStudentPasswordToClipboard);
+
+    // Chống quay lại trình duyệt (Back Button / Popstate / Pageshow Protection)
+    window.addEventListener('popstate', () => {
+      checkAuthSession();
+    });
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) {
+        checkAuthSession();
+      }
+    });
   }
 
   // Khởi động ứng dụng

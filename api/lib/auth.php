@@ -50,9 +50,37 @@ function start_session_safe(): void {
 
 function require_admin(): void {
     start_session_safe();
-    if (empty($_SESSION['user_id']) || empty($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
         json_error('Vui lòng đăng nhập để tiếp tục.', 'UNAUTHORIZED', 401);
     }
+    if ($_SESSION['role'] !== 'admin') {
+        json_error('Bạn không có quyền truy cập chức năng này.', 'FORBIDDEN', 403);
+    }
+}
+
+function require_student(bool $allowMustChangePassword = false): array {
+    start_session_safe();
+    if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
+        json_error('Vui lòng đăng nhập để tiếp tục.', 'UNAUTHORIZED', 401);
+    }
+    if ($_SESSION['role'] !== 'student') {
+        json_error('Bạn không có quyền truy cập chức năng này.', 'FORBIDDEN', 403);
+    }
+
+    $db = get_db_connection();
+    $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, student_id, must_change_password FROM users WHERE id = :id LIMIT 1");
+    $stmt->execute(['id' => $_SESSION['user_id']]);
+    $user = $stmt->fetch();
+
+    if (!$user || $user['role'] !== 'student' || empty($user['student_id'])) {
+        json_error('Bạn không có quyền truy cập chức năng này.', 'FORBIDDEN', 403);
+    }
+
+    if (!$allowMustChangePassword && !empty($user['must_change_password'])) {
+        json_error('Vui lòng đổi mật khẩu trước khi tiếp tục.', 'PASSWORD_CHANGE_REQUIRED', 403);
+    }
+
+    return $user;
 }
 
 function get_session_user(): ?array {
@@ -60,11 +88,27 @@ function get_session_user(): ?array {
     if (empty($_SESSION['user_id'])) {
         return null;
     }
+    $db = get_db_connection();
+    $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, student_id, must_change_password FROM users WHERE id = :id LIMIT 1");
+    $stmt->execute(['id' => $_SESSION['user_id']]);
+    $user = $stmt->fetch();
+    if ($user) {
+        return [
+            'id'                   => (int)$user['id'],
+            'username'             => $user['username'],
+            'full_name'            => $user['full_name'],
+            'role'                 => $user['role'],
+            'student_id'           => $user['student_id'] !== null ? (int)$user['student_id'] : null,
+            'must_change_password' => (int)$user['must_change_password'],
+        ];
+    }
     return [
-        'id'        => (int)$_SESSION['user_id'],
-        'username'  => $_SESSION['username'] ?? '',
-        'full_name' => $_SESSION['full_name'] ?? '',
-        'role'      => $_SESSION['role'] ?? 'admin',
+        'id'                   => (int)$_SESSION['user_id'],
+        'username'             => $_SESSION['username'] ?? '',
+        'full_name'            => $_SESSION['full_name'] ?? '',
+        'role'                 => $_SESSION['role'] ?? 'admin',
+        'student_id'           => isset($_SESSION['student_id']) ? (int)$_SESSION['student_id'] : null,
+        'must_change_password' => (int)($_SESSION['must_change_password'] ?? 0),
     ];
 }
 
@@ -72,7 +116,7 @@ function login_user(string $username, string $password): array {
     check_rate_limit('login', 30, 60);
 
     $db = get_db_connection();
-    $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, failed_logins, locked_until FROM users WHERE username = :username LIMIT 1");
+    $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until FROM users WHERE username = :username LIMIT 1");
     $stmt->execute(['username' => $username]);
     $user = $stmt->fetch();
 
@@ -133,32 +177,38 @@ function login_user(string $username, string $password): array {
     $_SESSION['username'] = $user['username'];
     $_SESSION['full_name'] = $user['full_name'];
     $_SESSION['role'] = $user['role'];
+    $_SESSION['student_id'] = $user['student_id'] !== null ? (int)$user['student_id'] : null;
+    $_SESSION['must_change_password'] = (int)$user['must_change_password'];
     $_SESSION['created_at'] = time();
     $_SESSION['last_activity'] = time();
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
     log_audit((int)$user['id'], 'login_success', 'users', (string)$user['id'], ['username' => $username]);
 
-    // Thiết lập baseline cho Giao dịch mới trên lần đăng nhập đầu tiên
-    try {
-        $chkNav = $db->prepare("SELECT user_id FROM user_nav_state WHERE user_id = :uid AND nav_key = 'history'");
-        $chkNav->execute(['uid' => $user['id']]);
-        if (!$chkNav->fetch()) {
-            $maxEntryStmt = $db->query("SELECT COALESCE(MAX(id), 0) FROM ledger_entries");
-            $maxEntryId = (int)$maxEntryStmt->fetchColumn();
-            $insNav = $db->prepare("INSERT INTO user_nav_state (user_id, nav_key, last_seen_entry_id, updated_at) VALUES (:uid, 'history', :maxId, NOW())");
-            $insNav->execute(['uid' => $user['id'], 'maxId' => $maxEntryId]);
+    // Thiết lập baseline cho Giao dịch mới trên lần đăng nhập đầu tiên (đối với admin)
+    if ($user['role'] === 'admin') {
+        try {
+            $chkNav = $db->prepare("SELECT user_id FROM user_nav_state WHERE user_id = :uid AND nav_key = 'history'");
+            $chkNav->execute(['uid' => $user['id']]);
+            if (!$chkNav->fetch()) {
+                $maxEntryStmt = $db->query("SELECT COALESCE(MAX(id), 0) FROM ledger_entries");
+                $maxEntryId = (int)$maxEntryStmt->fetchColumn();
+                $insNav = $db->prepare("INSERT INTO user_nav_state (user_id, nav_key, last_seen_entry_id, updated_at) VALUES (:uid, 'history', :maxId, NOW())");
+                $insNav->execute(['uid' => $user['id'], 'maxId' => $maxEntryId]);
+            }
+        } catch (Throwable $e) {
+            // Không làm gián đoạn đăng nhập nếu có lỗi
         }
-    } catch (Throwable $e) {
-        // Không làm gián đoạn đăng nhập nếu có lỗi
     }
 
     return [
-        'id'         => (int)$user['id'],
-        'username'   => $user['username'],
-        'full_name'  => $user['full_name'],
-        'role'       => $user['role'],
-        'csrf_token' => $_SESSION['csrf_token']
+        'id'                   => (int)$user['id'],
+        'username'             => $user['username'],
+        'full_name'            => $user['full_name'],
+        'role'                 => $user['role'],
+        'student_id'           => $user['student_id'] !== null ? (int)$user['student_id'] : null,
+        'must_change_password' => (int)$user['must_change_password'],
+        'csrf_token'           => $_SESSION['csrf_token']
     ];
 }
 

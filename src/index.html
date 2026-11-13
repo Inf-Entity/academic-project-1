@@ -27,7 +27,9 @@
       <div class="demo-credentials-box">
         <strong>Tài khoản Quản trị viên:</strong>
         <p>Tên đăng nhập: <code>admin</code> | Mật khẩu: <code>Admin@123</code></p>
-        <small class="text-muted">(Tài khoản quản trị thử nghiệm cục bộ)</small>
+        <strong style="display:block; margin-top: 0.5rem;">Tài khoản Sinh viên:</strong>
+        <p>Tên đăng nhập: <code>sv001</code> | Mật khẩu: <code>Student@001</code></p>
+        <small class="text-muted">(Sinh viên truy cập: Đăng ký tín chỉ, Công nợ, Thanh toán &amp; Lịch sử)</small>
       </div>
 
       <form id="login-form" method="POST" action="javascript:void(0);" novalidate>
@@ -63,7 +65,7 @@
 
         <div id="login-general-error" class="error-banner" role="alert" hidden></div>
 
-        <button type="submit" id="btn-login" class="btn btn-primary btn-block">Đăng nhập Quản trị</button>
+        <button type="submit" id="btn-login" class="btn btn-primary btn-block">Đăng nhập Hệ thống</button>
       </form>
 
       <div class="login-footer-links" style="margin-top: 1.25rem; text-align: center; font-size: 0.875rem; border-top: 1px solid #e5e7eb; padding-top: 0.75rem;">
@@ -71,6 +73,50 @@
         <span style="color: #9ca3af; margin: 0 0.5rem;">•</span>
         <a href="pages/contact.php" style="color: #2563eb; text-decoration: none; font-weight: 500;">📞 Liên hệ Phòng KHTC</a>
       </div>
+    </div>
+  </div>
+
+  <!-- MÀN HÌNH ĐỔI MẬT KHẨU BẮT BUỘC (Chỉ hiển thị khi must_change_password = 1) -->
+  <div id="student-password-change-screen" class="login-wrapper" hidden>
+    <div class="login-card" style="max-width: 480px;">
+      <div class="login-header">
+        <div class="logo-mark" aria-hidden="true">🔒</div>
+        <h1>Yêu cầu Đổi mật khẩu</h1>
+        <p class="subtitle">Tài khoản sinh viên mới hoặc vừa được đặt lại mật khẩu</p>
+      </div>
+
+      <div class="alert-banner alert-warning" style="margin-bottom: 1.25rem; display: block;">
+        <strong>Bắt buộc đổi mật khẩu:</strong>
+        <p style="margin: 0.25rem 0 0; font-size: 0.875rem;">Vì lý do an toàn, bạn phải thay đổi mật khẩu tạm thời thành mật khẩu cá nhân mới trước khi truy cập các chức năng của hệ thống.</p>
+      </div>
+
+      <form id="student-password-form" method="POST" action="javascript:void(0);" novalidate>
+        <div class="form-error-summary" role="alert" hidden></div>
+        
+        <div class="form-group">
+          <label for="change-pw-current">Mật khẩu hiện tại (hoặc mật khẩu tạm thời) <span class="required">*</span></label>
+          <input type="password" id="change-pw-current" name="current_password" required autocomplete="current-password" aria-describedby="change-pw-current-error">
+          <span id="change-pw-current-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="change-pw-new">Mật khẩu mới <span class="required">*</span></label>
+          <input type="password" id="change-pw-new" name="new_password" required autocomplete="new-password" aria-describedby="change-pw-new-error">
+          <small class="text-muted" style="display:block; margin-top: 0.25rem;">Tối thiểu 8 ký tự, bao gồm cả chữ cái và chữ số.</small>
+          <span id="change-pw-new-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="change-pw-confirm">Xác nhận mật khẩu mới <span class="required">*</span></label>
+          <input type="password" id="change-pw-confirm" name="new_password_confirmation" required autocomplete="new-password" aria-describedby="change-pw-confirm-error">
+          <span id="change-pw-confirm-error" class="error-msg" aria-live="polite"></span>
+        </div>
+
+        <div id="change-pw-general-error" class="error-banner" role="alert" hidden></div>
+
+        <button type="submit" id="btn-student-change-pw" class="btn btn-primary btn-block">Đổi mật khẩu &amp; Tiếp tục</button>
+        <button type="button" id="btn-change-pw-logout" class="btn btn-outline btn-block" style="margin-top: 0.5rem;">Đăng xuất</button>
+      </form>
     </div>
   </div>
 
@@ -572,6 +618,267 @@
               </thead>
               <tbody id="approval-queue-table-body">
                 <!-- Điền tự động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- GIAO DIỆN CỔNG SINH VIÊN (Student Portal - 4 Chức năng) -->
+  <div id="student-app-container" class="app-container" hidden>
+    <header class="app-header">
+      <div class="header-branding">
+        <span class="header-logo" aria-hidden="true">🎓</span>
+        <div class="header-titles">
+          <span class="school-tag">[Tên trường]</span>
+          <h1 class="system-title">Cổng Thông tin Học phí Sinh viên</h1>
+        </div>
+      </div>
+      <div class="header-user">
+        <span class="user-badge" id="student-user-display">👤 Sinh viên: <strong>...</strong></span>
+        <button type="button" id="btn-student-logout" class="btn btn-outline-danger btn-sm">Đăng xuất</button>
+      </div>
+    </header>
+
+    <nav class="app-nav" aria-label="Điều hướng sinh viên">
+      <ul class="nav-tabs" role="tablist">
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-student-registration" aria-selected="false" aria-controls="panel-student-registration" tabindex="-1">
+            📝 Đăng ký tín chỉ
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-student-debts" aria-selected="true" aria-controls="panel-student-debts" tabindex="0">
+            📊 Công nợ học phí
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-student-payments" aria-selected="false" aria-controls="panel-student-payments" tabindex="-1">
+            💳 Thanh toán học phí
+          </button>
+        </li>
+        <li role="presentation">
+          <button type="button" role="tab" id="tab-student-history" aria-selected="false" aria-controls="panel-student-history" tabindex="-1">
+            📜 Lịch sử thanh toán
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    <main class="main-content">
+      <!-- 1. ĐĂNG KÝ TÍN CHỈ -->
+      <section id="panel-student-registration" role="tabpanel" aria-labelledby="tab-student-registration" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Đăng ký Tín chỉ Học kỳ</h2>
+            <p class="panel-desc">Đăng ký hoặc điều chỉnh số tín chỉ cho các học kỳ đang mở cổng đăng ký.</p>
+          </div>
+        </div>
+        <div id="student-semesters-list" class="semesters-grid" style="display: grid; gap: 1.25rem;">
+          <!-- Danh sách học kỳ nạp động qua JavaScript -->
+        </div>
+      </section>
+
+      <!-- 2. CÔNG NỢ HỌC PHÍ -->
+      <section id="panel-student-debts" role="tabpanel" aria-labelledby="tab-student-debts" class="tab-panel active">
+        <div class="panel-header">
+          <div>
+            <h2>Tra cứu Công nợ Học phí</h2>
+            <p class="panel-desc">Theo dõi các khoản học phí, chính sách miễn giảm và số dư còn nợ.</p>
+          </div>
+        </div>
+
+        <div class="stats-overview" style="margin-bottom: 1.5rem;">
+          <div class="stat-card" style="border-left: 4px solid #ef4444;">
+            <div class="stat-icon" aria-hidden="true">💰</div>
+            <div class="stat-details">
+              <span class="stat-title">TỔNG HỌC PHÍ CÒN NỢ (TẤT CẢ HỌC KỲ)</span>
+              <strong class="stat-value" id="student-total-outstanding" style="color: #ef4444; font-size: 1.8rem;">0 ₫</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bảng 1: Học phí chưa thanh toán -->
+        <div class="content-card" style="margin-bottom: 2rem;">
+          <div class="card-header" style="padding: 1rem 1.25rem; border-bottom: 1px solid #e5e7eb;">
+            <h3 style="margin: 0; font-size: 1.15rem; color: #b91c1c;">⚠️ Học phí chưa thanh toán</h3>
+            <p class="text-muted" style="margin: 0.25rem 0 0; font-size: 0.875rem;">Các học kỳ còn số dư nợ cần hoàn thành nghĩa vụ tài chính.</p>
+          </div>
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng học phí chưa thanh toán">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số TC</th>
+                  <th scope="col" class="text-right">Đơn giá/TC</th>
+                  <th scope="col" class="text-right">Học phí gốc</th>
+                  <th scope="col" class="text-right">Miễn giảm</th>
+                  <th scope="col" class="text-right">Phải nộp (Net)</th>
+                  <th scope="col" class="text-right">Đã nộp</th>
+                  <th scope="col" class="text-right" style="color: #ef4444;">Còn nợ</th>
+                  <th scope="col" class="text-center">Trạng thái</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="student-unpaid-debts-body">
+                <!-- Nạp động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Bảng 2: Toàn bộ hồ sơ học phí -->
+        <div class="content-card">
+          <div class="card-header" style="padding: 1rem 1.25rem; border-bottom: 1px solid #e5e7eb;">
+            <h3 style="margin: 0; font-size: 1.15rem;">📋 Toàn bộ Hồ sơ Học phí</h3>
+            <p class="text-muted" style="margin: 0.25rem 0 0; font-size: 0.875rem;">Danh sách chi tiết tất cả các học kỳ đã tham gia.</p>
+          </div>
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng toàn bộ hồ sơ học phí">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số TC</th>
+                  <th scope="col" class="text-right">Đơn giá/TC</th>
+                  <th scope="col" class="text-right">Học phí gốc</th>
+                  <th scope="col" class="text-right">Miễn giảm</th>
+                  <th scope="col" class="text-right">Phải nộp (Net)</th>
+                  <th scope="col" class="text-right">Đã nộp</th>
+                  <th scope="col" class="text-right">Còn nợ</th>
+                  <th scope="col" class="text-center">Trạng thái</th>
+                </tr>
+              </thead>
+              <tbody id="student-all-debts-body">
+                <!-- Nạp động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. THANH TOÁN HỌC PHÍ -->
+      <section id="panel-student-payments" role="tabpanel" aria-labelledby="tab-student-payments" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Thanh toán Học phí Trực tuyến</h2>
+            <p class="panel-desc">Thanh toán qua cổng mô phỏng ngân hàng hoặc thẻ thanh toán quốc tế.</p>
+          </div>
+        </div>
+
+        <div class="content-card" style="max-width: 680px; margin: 0 auto;">
+          <form id="student-payment-form" method="POST" action="javascript:void(0);" novalidate>
+            <div class="form-error-summary" role="alert" hidden></div>
+
+            <div class="form-group">
+              <label for="student-pay-fee-record">Chọn khoản học phí cần thanh toán <span class="required">*</span></label>
+              <select id="student-pay-fee-record" name="fee_record_id" required class="form-control" aria-describedby="student-pay-fee-record-error">
+                <option value="">-- Chọn học kỳ còn nợ --</option>
+              </select>
+              <span id="student-pay-fee-record-error" class="error-msg" aria-live="polite"></span>
+            </div>
+
+            <div class="form-group">
+              <label for="student-pay-amount">Số tiền thanh toán (VND) <span class="required">*</span></label>
+              <input type="number" id="student-pay-amount" name="amount" min="1" step="1" required class="form-control" aria-describedby="student-pay-amount-error">
+              <small class="text-muted" id="student-pay-max-hint" style="display:block; margin-top: 0.25rem;">Số tiền không được vượt quá số dư còn nợ.</small>
+              <span id="student-pay-amount-error" class="error-msg" aria-live="polite"></span>
+            </div>
+
+            <div class="form-group">
+              <label>Phương thức thanh toán <span class="required">*</span></label>
+              <div style="display: flex; gap: 1.5rem; margin-top: 0.5rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                  <input type="radio" name="student_pay_method" value="Chuyển khoản" checked>
+                  <span>🏦 Chuyển khoản ngân hàng</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                  <input type="radio" name="student_pay_method" value="Thẻ">
+                  <span>💳 Thẻ quốc tế (Visa/Mastercard)</span>
+                </label>
+              </div>
+              <small class="text-muted" style="display:block; margin-top: 0.5rem;"><em>Lưu ý: Phương thức 'Tiền mặt' chỉ thực hiện tại quầy Phòng Kế hoạch - Tài chính.</em></small>
+            </div>
+
+            <div id="student-pay-general-error" class="error-banner" role="alert" hidden></div>
+
+            <button type="submit" id="btn-student-submit-pay" class="btn btn-success btn-block" style="font-size: 1.05rem; padding: 0.75rem;">
+              🚀 Tiến hành Thanh toán qua Cổng Giả lập
+            </button>
+          </form>
+
+          <div id="student-pay-success-box" class="alert-banner alert-success" style="margin-top: 1.5rem; display: none;" role="status">
+            <h4 style="margin: 0 0 0.5rem; color: #166534;">🎉 Thanh toán Thành công!</h4>
+            <p style="margin: 0.25rem 0;">Mã giao dịch cổng: <code id="sp-gw-ref">...</code></p>
+            <p style="margin: 0.25rem 0;">Số biên lai điện tử: <strong id="sp-receipt-no">...</strong></p>
+            <p style="margin: 0.25rem 0;">Số tiền đã thanh toán: <strong id="sp-amount">... ₫</strong></p>
+            <div style="margin-top: 1rem;">
+              <button type="button" id="btn-student-view-receipt" class="btn btn-primary btn-sm">🖨️ Xem &amp; In Biên lai</button>
+              <button type="button" id="btn-student-pay-another" class="btn btn-outline btn-sm" style="margin-left: 0.5rem;">Thanh toán tiếp</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. LỊCH SỬ THANH TOÁN -->
+      <section id="panel-student-history" role="tabpanel" aria-labelledby="tab-student-history" class="tab-panel" hidden>
+        <div class="panel-header">
+          <div>
+            <h2>Lịch sử Giao dịch &amp; Thanh toán</h2>
+            <p class="panel-desc">Nhật ký chi tiết các giao dịch nộp tiền, đảo bút toán, nhận chuyển và hoàn tiền.</p>
+          </div>
+        </div>
+
+        <!-- Thông báo yêu cầu hoàn tiền đang chờ duyệt -->
+        <div id="student-pending-refund-alert" class="alert-banner alert-warning" style="margin-bottom: 1.5rem; display: none;" role="status">
+          <strong>⏳ Yêu cầu hoàn tiền đang chờ duyệt:</strong>
+          <div id="student-pending-refund-content" style="margin-top: 0.25rem;"></div>
+        </div>
+
+        <div class="content-card">
+          <form id="student-history-filter-form" class="filter-row" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 1.5rem;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="student-hist-from">Từ ngày</label>
+              <input type="date" id="student-hist-from" name="from" class="form-control" style="width: auto;">
+              <span id="student-hist-from-error" class="error-msg" aria-live="polite"></span>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="student-hist-to">Đến ngày</label>
+              <input type="date" id="student-hist-to" name="to" class="form-control" style="width: auto;">
+              <span id="student-hist-to-error" class="error-msg" aria-live="polite"></span>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="student-hist-type">Loại giao dịch</label>
+              <select id="student-hist-type" name="type" class="form-control" style="width: auto;">
+                <option value="">-- Tất cả loại --</option>
+                <option value="payment">Thanh toán</option>
+                <option value="reversal">Đảo bút toán</option>
+                <option value="transfer_in">Nhận chuyển khoản</option>
+                <option value="transfer_out">Chuyển đi</option>
+                <option value="refund">Hoàn tiền</option>
+              </select>
+            </div>
+            <button type="submit" id="btn-filter-student-history" class="btn btn-primary">🔍 Lọc dữ liệu</button>
+            <button type="button" id="btn-reset-student-history" class="btn btn-secondary">Đặt lại</button>
+          </form>
+
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng lịch sử giao dịch">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Ngày giao dịch</th>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col">Số biên lai / Mã GD</th>
+                  <th scope="col" class="text-right">Số tiền</th>
+                  <th scope="col">Phương thức</th>
+                  <th scope="col" class="text-center">Loại giao dịch</th>
+                  <th scope="col" class="text-right">Số dư lũy kế kỳ</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="student-history-table-body">
+                <!-- Nạp động bằng JavaScript -->
               </tbody>
             </table>
           </div>
@@ -1247,6 +1554,44 @@
       </form>
     </div>
   </dialog>
+
+  <!-- Modal: Quản lý Tài khoản Sinh viên (Admin Cấp / Đặt lại Mật khẩu) -->
+  <dialog id="modal-student-account" aria-labelledby="modal-student-account-title">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2 id="modal-student-account-title">Quản lý Tài khoản Sinh viên</h2>
+        <button type="button" class="btn-close" id="btn-close-student-account-modal" aria-label="Đóng">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Sinh viên: <strong id="sa-student-name">...</strong> (<span id="sa-student-code">...</span>)</p>
+        
+        <div id="sa-action-box" style="margin-top: 1rem;">
+          <p class="text-muted" style="font-size: 0.9rem;">Chọn thao tác cấp tài khoản mới hoặc đặt lại mật khẩu tạm thời cho sinh viên:</p>
+          <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+            <button type="button" id="btn-sa-create" class="btn btn-primary">➕ Cấp tài khoản mới</button>
+            <button type="button" id="btn-sa-reset" class="btn btn-warning">🔄 Đặt lại mật khẩu</button>
+          </div>
+        </div>
+
+        <div id="sa-result-box" style="display: none; margin-top: 1.25rem;" class="alert-banner alert-success">
+          <h4 style="margin: 0 0 0.5rem; color: #166534;">🎉 Thông tin Tài khoản Sinh viên</h4>
+          <p style="margin: 0.25rem 0;">Tên đăng nhập: <strong id="sa-res-username">...</strong></p>
+          <p style="margin: 0.5rem 0 0.25rem;">Mật khẩu tạm thời:</p>
+          <div style="display: flex; gap: 0.5rem; align-items: center; margin: 0.25rem 0 0.75rem;">
+            <code id="sa-res-password" style="font-size: 1.25rem; font-weight: bold; background: #fff; padding: 0.25rem 0.5rem; border: 1px solid #bbf7d0; border-radius: 4px; color: #b91c1c;">...</code>
+            <button type="button" id="btn-sa-copy-pw" class="btn btn-sm btn-outline-secondary">📋 Sao chép</button>
+          </div>
+          <small class="text-muted" style="display: block; color: #b45309;">
+            ⚠️ Mật khẩu chỉ hiển thị một lần duy nhất. Vui lòng cung cấp cho sinh viên. Sinh viên sẽ được yêu cầu đổi mật khẩu ngay khi đăng nhập.
+          </small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-student-account">Đóng</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- ==================== KHU VỰC IN BIÊN LAI (PRINTABLE RECEIPT VIEW) ==================== -->
   <div id="receipt-print-area" class="receipt-print-area" hidden>
     <div class="receipt-card">

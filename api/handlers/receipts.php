@@ -11,7 +11,19 @@ require_once dirname(__DIR__) . '/lib/response.php';
 require_once dirname(__DIR__) . '/lib/calc.php';
 
 function handle_receipts_routes(string $method, string $path, array $matches): void {
-    require_admin();
+    start_session_safe();
+    if (empty($_SESSION['user_id']) || empty($_SESSION['role'])) {
+        json_error('Vui lòng đăng nhập để tiếp tục.', 'UNAUTHORIZED', 401);
+    }
+
+    $role = $_SESSION['role'];
+    $scopedStudentId = null;
+    if ($role === 'student') {
+        $studentUser = require_student(false);
+        $scopedStudentId = (int)$studentUser['student_id'];
+    } elseif ($role !== 'admin') {
+        json_error('Bạn không có quyền truy cập chức năng này.', 'FORBIDDEN', 403);
+    }
 
     if ($method === 'GET') {
         $rawParam = !empty($matches[2]) ? (string)$matches[2] : (!empty($matches[1]) ? (string)$matches[1] : (string)($_GET['receipt_no'] ?? ($_GET['no'] ?? '')));
@@ -47,8 +59,14 @@ function handle_receipts_routes(string $method, string $path, array $matches): v
              LEFT JOIN users u ON l.created_by = u.id
              WHERE " . (is_numeric($lookupParam) ? "l.id = :val" : "l.receipt_no = :val");
 
+        $params = ['val' => $lookupParam];
+        if ($scopedStudentId !== null) {
+            $sql .= " AND fr.student_id = :stId";
+            $params['stId'] = $scopedStudentId;
+        }
+
         $stmt = $db->prepare($sql);
-        $stmt->execute(['val' => $lookupParam]);
+        $stmt->execute($params);
         $entry = $stmt->fetch();
 
         if (!$entry) {

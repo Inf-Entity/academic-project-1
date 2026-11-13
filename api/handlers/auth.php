@@ -49,8 +49,11 @@ function handle_auth_routes(string $method, string $path): void {
     }
 
     if ($path === '/api/me' && $method === 'GET') {
-        require_admin();
+        start_session_safe();
         $user = get_session_user();
+        if (!$user) {
+            json_error('Vui lòng đăng nhập để tiếp tục.', 'UNAUTHORIZED', 401);
+        }
         $user['csrf_token'] = init_csrf_token();
         json_success($user);
     }

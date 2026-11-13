@@ -29,6 +29,7 @@ require_once __DIR__ . '/lib/validate.php';
 require_once __DIR__ . '/lib/calc.php';
 require_once __DIR__ . '/lib/audit.php';
 require_once __DIR__ . '/lib/rate_limit.php';
+require_once __DIR__ . '/lib/payment_gateway.php';
 
 // Global Exception Handler
 set_exception_handler(function (Throwable $e) {
@@ -57,6 +58,7 @@ require_once __DIR__ . '/handlers/history.php';
 require_once __DIR__ . '/handlers/reports.php';
 require_once __DIR__ . '/handlers/receipts.php';
 require_once __DIR__ . '/handlers/nav.php';
+require_once __DIR__ . '/handlers/student.php';
 
 // Xác định phương thức và đường dẫn yêu cầu
 $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
@@ -84,8 +86,13 @@ if ($path === '/api/csrf' || $path === '/api/login' || $path === '/api/logout' |
     exit;
 }
 
-if ($path === '/api/students' || preg_match('#^/api/students/(\d+)(/account)?$#', $path, $m)) {
+if ($path === '/api/students' || preg_match('#^/api/students/(\d+)(/account(/reset)?)?$#', $path, $m)) {
     handle_students_routes($method, $path, $m ?? []);
+    exit;
+}
+
+if ($path === '/api/student' || str_starts_with($path, '/api/student/')) {
+    handle_student_routes($method, $path, $m ?? []);
     exit;
 }
 

@@ -1454,3 +1454,55 @@ textarea.is-invalid,
 .text-warning-dark {
   color: #b45309;
 }
+
+/* ==========================================================================
+   STUDENT PORTAL & ACCOUNT STYLES
+   ========================================================================== */
+.semesters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.semester-card {
+  background: #ffffff;
+  border: 1px solid var(--color-border-light, #e2e8f0);
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.semester-card-header {
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 0.75rem;
+}
+
+.semester-card-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--color-text-main, #1e293b);
+}
+
+.semester-reg-status {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+}
+
+.semester-calc-preview {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+}
+
+.btn-student-account {
+  margin-left: 0.25rem;
+}

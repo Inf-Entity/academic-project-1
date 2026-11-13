@@ -72,26 +72,92 @@ $adminUsers = [
     ]
 ];
 
-$stmt = $pdo->prepare(
-    "INSERT INTO users (username, password_hash, full_name, role, failed_logins, locked_until)
-     VALUES (:username, :password_hash, :full_name, :role, 0, NULL)
+$stmtAdmin = $pdo->prepare(
+    "INSERT INTO users (username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until)
+     VALUES (:username, :password_hash, :full_name, 'admin', NULL, 0, 0, NULL)
      ON DUPLICATE KEY UPDATE 
         password_hash = VALUES(password_hash),
         full_name = VALUES(full_name),
-        role = VALUES(role),
+        role = 'admin',
+        student_id = NULL,
+        must_change_password = 0,
         failed_logins = 0,
         locked_until = NULL"
 );
 
 foreach ($adminUsers as $user) {
     $hash = password_hash($user['password'], PASSWORD_DEFAULT);
-    $stmt->execute([
+    $stmtAdmin->execute([
         'username'      => $user['username'],
         'password_hash' => $hash,
         'full_name'     => $user['full_name'],
-        'role'          => $user['role'],
     ]);
-    echo "User '{$user['username']}' seeded successfully in '{$dbName}'.\n";
+    echo "Admin user '{$user['username']}' seeded successfully in '{$dbName}'.\n";
+}
+
+$studentUsers = [
+    [
+        'student_code'         => 'SV001',
+        'username'             => 'sv001',
+        'password'             => 'Student@001',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV002',
+        'username'             => 'sv002',
+        'password'             => 'Student@002',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV003',
+        'username'             => 'sv003',
+        'password'             => 'Student@003',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV011',
+        'username'             => 'sv011',
+        'password'             => 'Student@011',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV006',
+        'username'             => 'sv006',
+        'password'             => 'Student@006',
+        'must_change_password' => 1,
+    ],
+];
+
+$findStudentStmt = $pdo->prepare("SELECT id, full_name FROM students WHERE student_code = :code LIMIT 1");
+$stmtStudent = $pdo->prepare(
+    "INSERT INTO users (username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until)
+     VALUES (:username, :password_hash, :full_name, 'student', :student_id, :must_change, 0, NULL)
+     ON DUPLICATE KEY UPDATE 
+        password_hash = VALUES(password_hash),
+        full_name = VALUES(full_name),
+        role = 'student',
+        student_id = VALUES(student_id),
+        must_change_password = VALUES(must_change_password),
+        failed_logins = 0,
+        locked_until = NULL"
+);
+
+foreach ($studentUsers as $su) {
+    $findStudentStmt->execute(['code' => $su['student_code']]);
+    $st = $findStudentStmt->fetch();
+    if (!$st) {
+        echo "Warning: Student '{$su['student_code']}' not found in students table. Skipping user.\n";
+        continue;
+    }
+    $hash = password_hash($su['password'], PASSWORD_DEFAULT);
+    $stmtStudent->execute([
+        'username'      => $su['username'],
+        'password_hash' => $hash,
+        'full_name'     => $st['full_name'],
+        'student_id'    => $st['id'],
+        'must_change'   => $su['must_change_password'],
+    ]);
+    echo "Student user '{$su['username']}' seeded successfully in '{$dbName}'.\n";
 }
 
 echo "Seed users script completed successfully.\n";
