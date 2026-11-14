@@ -30,6 +30,7 @@ require_once __DIR__ . '/lib/calc.php';
 require_once __DIR__ . '/lib/audit.php';
 require_once __DIR__ . '/lib/rate_limit.php';
 require_once __DIR__ . '/lib/payment_gateway.php';
+require_once __DIR__ . '/lib/payment.php';
 
 // Global Exception Handler
 set_exception_handler(function (Throwable $e) {
@@ -86,12 +87,12 @@ if (strlen($path) > 1 && substr($path, -1) === '/') {
 }
 
 // Điều hướng các Module
-if ($path === '/api/csrf' || $path === '/api/login' || $path === '/api/logout' || $path === '/api/me') {
+if ($path === '/api/csrf' || $path === '/api/login' || $path === '/api/logout' || $path === '/api/logout-beacon' || $path === '/api/me') {
     handle_auth_routes($method, $path);
     exit;
 }
 
-if ($path === '/api/students' || preg_match('#^/api/students/(\d+)(/account(/reset)?)?$#', $path, $m)) {
+if ($path === '/api/students' || $path === '/api/students/search' || preg_match('#^/api/students/(\d+)(/account(/reset)?)?$#', $path, $m)) {
     handle_students_routes($method, $path, $m ?? []);
     exit;
 }
@@ -101,7 +102,7 @@ if ($path === '/api/student' || str_starts_with($path, '/api/student/')) {
     exit;
 }
 
-if ($path === '/api/semesters' || preg_match('#^/api/semesters/(\d+)$#', $path, $m)) {
+if ($path === '/api/semesters' || $path === '/api/semesters/search' || preg_match('#^/api/semesters/(\d+)$#', $path, $m)) {
     handle_semesters_routes($method, $path, $m ?? []);
     exit;
 }

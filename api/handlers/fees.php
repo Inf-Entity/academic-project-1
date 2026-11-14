@@ -155,7 +155,13 @@ function handle_fees_routes(string $method, string $path, array $matches): void 
         $st = $db->prepare("SELECT id FROM students WHERE id = :id");
         $st->execute(['id' => $studentId]);
         if (!$st->fetch()) {
-            json_error('Sinh viên không tồn tại.', 'NOT_FOUND', 404);
+            json_error('Sinh viên không tồn tại.', 'NOT_FOUND', 404, ['student_id' => 'Sinh viên không tồn tại.']);
+        }
+
+        $semChk = $db->prepare("SELECT id FROM semesters WHERE id = :id");
+        $semChk->execute(['id' => $semesterId]);
+        if (!$semChk->fetch()) {
+            json_error('Học kỳ không tồn tại.', 'NOT_FOUND', 404, ['semester_id' => 'Học kỳ không tồn tại.']);
         }
 
         // Lấy định mức hiện tại của học kỳ

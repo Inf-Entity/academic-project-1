@@ -80,3 +80,58 @@ class SimulatedGateway implements PaymentGatewayInterface {
         ];
     }
 }
+
+/**
+ * Simulated Gateway for Visa/Mastercard Cards
+ */
+class SimulatedCardGateway implements PaymentGatewayInterface {
+    public function charge(int $amount, string $method, array $metadata = []): array {
+        $rawCard = (string)($metadata['card_number'] ?? '');
+        $cleanCard = preg_replace('/\D/', '', $rawCard);
+
+        // Detect brand
+        $brand = 'Visa/Mastercard';
+        if (str_starts_with($cleanCard, '4')) {
+            $brand = 'Visa';
+        } elseif (preg_match('/^(5[1-5]|2[2-7])/', $cleanCard)) {
+            $brand = 'Mastercard';
+        }
+
+        $last4 = strlen($cleanCard) >= 4 ? substr($cleanCard, -4) : '0000';
+
+        // 1. Test Card: Approved
+        if ($cleanCard === '4111111111111111') {
+            $ref = sprintf('GW-%s-%s', date('Ymd'), strtoupper(bin2hex(random_bytes(6))));
+            if (strlen($ref) > 40) {
+                $ref = substr($ref, 0, 40);
+            }
+            return [
+                'status'          => 'success',
+                'transaction_ref' => $ref,
+                'brand'           => $brand,
+                'last4'           => $last4,
+                'message'         => 'Giao dịch thẻ được chấp thuận.'
+            ];
+        }
+
+        // 2. Test Card: Gateway Timeout
+        if ($cleanCard === '4000000000000002') {
+            return [
+                'status'          => 'timeout',
+                'transaction_ref' => null,
+                'brand'           => $brand,
+                'last4'           => $last4,
+                'message'         => 'Thanh toán chưa được xử lý. Vui lòng thử lại sau.'
+            ];
+        }
+
+        // 3. Test Card 5555555555554444 or any other valid card: Declined
+        return [
+            'status'          => 'declined',
+            'transaction_ref' => null,
+            'brand'           => $brand,
+            'last4'           => $last4,
+            'message'         => 'Thẻ bị từ chối. Vui lòng kiểm tra thông tin hoặc dùng thẻ khác.'
+        ];
+    }
+}

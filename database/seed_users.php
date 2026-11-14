@@ -126,20 +126,58 @@ $studentUsers = [
         'password'             => 'Student@006',
         'must_change_password' => 1,
     ],
+    [
+        'student_code'         => 'SV014',
+        'username'             => 'sv014',
+        'password'             => 'Student@014',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV015',
+        'username'             => 'sv015',
+        'password'             => 'Student@015',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV018',
+        'username'             => 'sv018',
+        'password'             => 'Student@018',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV020',
+        'username'             => 'sv020',
+        'password'             => 'Student@020',
+        'must_change_password' => 0,
+    ],
+    [
+        'student_code'         => 'SV023',
+        'username'             => 'sv023',
+        'password'             => 'Student@023',
+        'must_change_password' => 1,
+    ],
+    [
+        'student_code'         => 'SV024',
+        'username'             => 'sv024',
+        'password'             => 'Student@024',
+        'must_change_password' => 0,
+        'failed_logins'        => 5,
+        'locked_until'         => '2030-01-01 00:00:00',
+    ],
 ];
 
 $findStudentStmt = $pdo->prepare("SELECT id, full_name FROM students WHERE student_code = :code LIMIT 1");
 $stmtStudent = $pdo->prepare(
     "INSERT INTO users (username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until)
-     VALUES (:username, :password_hash, :full_name, 'student', :student_id, :must_change, 0, NULL)
+     VALUES (:username, :password_hash, :full_name, 'student', :student_id, :must_change, :failed, :locked)
      ON DUPLICATE KEY UPDATE 
         password_hash = VALUES(password_hash),
         full_name = VALUES(full_name),
         role = 'student',
         student_id = VALUES(student_id),
         must_change_password = VALUES(must_change_password),
-        failed_logins = 0,
-        locked_until = NULL"
+        failed_logins = VALUES(failed_logins),
+        locked_until = VALUES(locked_until)"
 );
 
 foreach ($studentUsers as $su) {
@@ -156,6 +194,8 @@ foreach ($studentUsers as $su) {
         'full_name'     => $st['full_name'],
         'student_id'    => $st['id'],
         'must_change'   => $su['must_change_password'],
+        'failed'        => $su['failed_logins'] ?? 0,
+        'locked'        => $su['locked_until'] ?? null,
     ]);
     echo "Student user '{$su['username']}' seeded successfully in '{$dbName}'.\n";
 }

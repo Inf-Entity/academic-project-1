@@ -17,6 +17,47 @@ function handle_students_routes(string $method, string $path, array $matches): v
     require_admin();
     $db = get_db_connection();
 
+    // 1b. GET /api/students/search (Combobox Search for fee record creation)
+    if ($path === '/api/students/search' && $method === 'GET') {
+        $rawQ = isset($_GET['q']) ? (string)$_GET['q'] : '';
+        $trimmed = trim($rawQ);
+        if (mb_strlen($trimmed, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, [
+                'q' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.'
+            ]);
+        }
+
+        if ($trimmed === '') {
+            send_security_headers();
+            http_response_code(200);
+            echo json_encode([
+                'ok'      => true,
+                'data'    => [],
+                'message' => 'Nhập mã hoặc tên để tìm sinh viên.'
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        $norm = normalize_vietnamese($trimmed);
+        $stmt = $db->prepare(
+            "SELECT id, student_code, full_name, class_name
+             FROM students
+             WHERE student_code LIKE :code OR name_search LIKE :q
+             ORDER BY student_code ASC
+             LIMIT 20"
+        );
+        $stmt->execute([
+            'code' => '%' . strtoupper($trimmed) . '%',
+            'q'    => '%' . $norm . '%'
+        ]);
+
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$r) {
+            $r['id'] = (int)$r['id'];
+        }
+        json_success($rows, 200);
+    }
+
     // 1. GET /api/students (List & Search)
     if ($path === '/api/students' && $method === 'GET') {
         $rawQ = (string)($_GET['q'] ?? '');

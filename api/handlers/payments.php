@@ -75,87 +75,21 @@ function handle_payments_routes(string $method, string $path, array $matches): v
 
         $userId = (int)($_SESSION['user_id'] ?? 1);
 
-        // Transaction xử lý thanh toán với lock dòng và deadlock retry
+        // Transaction xử lý thanh toán với lock dòng và deadlock retry (hàm dùng chung execute_payment_transaction)
         $result = db_transaction(function(PDO $pdo) use ($feeRecordId, $amount, $payMethod, $entryDate, $note, $requestId, $userId) {
-            // 1. Lock dòng hồ sơ học phí
-            $feeStmt = $pdo->prepare("SELECT id FROM fee_records WHERE id = :id FOR UPDATE");
-            $feeStmt->execute(['id' => $feeRecordId]);
-            if (!$feeStmt->fetch()) {
-                json_error('Không tìm thấy hồ sơ học phí.', 'NOT_FOUND', 404);
-            }
-
-            // 2. Đọc tổng số nợ và số đã nộp thực tế sau khi đã lock
-            $summary = fetch_fee_record_summary($pdo, $feeRecordId);
-            $netDue = (int)($summary['net_due'] ?? 0);
-            $totalPaid = (int)($summary['total_paid'] ?? 0);
-
-            // 3. Quy tắc từ chối nộp thừa
-            if (($totalPaid + $amount) > $netDue) {
-                json_error('Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước.', 'OVERPAYMENT_REJECTED', 422);
-            }
-
-            // 4. Sinh số biên lai nguyên tử (PT-YYYYMMDD-NNNN)
-            $pdo->prepare("INSERT INTO receipt_counters (day, last_no) VALUES (:today, 0) ON DUPLICATE KEY UPDATE day = day")
-                ->execute(['today' => $entryDate]);
-
-            $cntStmt = $pdo->prepare("SELECT last_no FROM receipt_counters WHERE day = :today FOR UPDATE");
-            $cntStmt->execute(['today' => $entryDate]);
-            $lastNo = (int)$cntStmt->fetchColumn();
-
-            $nextNo = $lastNo + 1;
-            $pdo->prepare("UPDATE receipt_counters SET last_no = :nextNo WHERE day = :today")
-                ->execute(['nextNo' => $nextNo, 'today' => $entryDate]);
-
-            $receiptNo = sprintf('PT-%s-%04d', str_replace('-', '', $entryDate), $nextNo);
-
-            // 5. Ghi vào sổ cái ledger_entries
-            $insStmt = $pdo->prepare(
-                "INSERT INTO ledger_entries (
-                    fee_record_id, entry_type, amount, method, entry_date, 
-                    receipt_no, reverses_entry_id, reason, note, request_id, created_by, created_at
-                ) VALUES (
-                    :frId, 'payment', :amount, :method, :entryDate,
-                    :receiptNo, NULL, NULL, :note, :reqId, :userId, NOW()
-                )"
+            return execute_payment_transaction(
+                $pdo,
+                $feeRecordId,
+                $amount,
+                $payMethod,
+                $entryDate,
+                $note,
+                $requestId,
+                $userId,
+                null,
+                null,
+                'payment'
             );
-
-            try {
-                $insStmt->execute([
-                    'frId'      => $feeRecordId,
-                    'amount'    => $amount,
-                    'method'    => $payMethod,
-                    'entryDate' => $entryDate,
-                    'receiptNo' => $receiptNo,
-                    'note'      => $note,
-                    'reqId'     => $requestId,
-                    'userId'    => $userId
-                ]);
-            } catch (PDOException $pe) {
-                // Nếu trùng request_id do concurrency race, trả lại bản ghi đã có
-                if ($pe->getCode() === '23000') {
-                    $chk = $pdo->prepare("SELECT * FROM ledger_entries WHERE request_id = :reqId");
-                    $chk->execute(['reqId' => $requestId]);
-                    $existing = $chk->fetch();
-                    if ($existing) {
-                        return $existing;
-                    }
-                }
-                throw $pe;
-            }
-
-            $newEntryId = (int)$pdo->lastInsertId();
-
-            log_audit($userId, 'payment', 'ledger_entries', (string)$newEntryId, [
-                'fee_record_id' => $feeRecordId,
-                'amount'        => $amount,
-                'method'        => $payMethod,
-                'receipt_no'    => $receiptNo,
-                'request_id'    => $requestId
-            ], $pdo);
-
-            $resStmt = $pdo->prepare("SELECT * FROM ledger_entries WHERE id = :id");
-            $resStmt->execute(['id' => $newEntryId]);
-            return $resStmt->fetch();
         }, $db);
 
         json_success($result, 201);

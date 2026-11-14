@@ -378,4 +378,74 @@ function generate_uuid(): string {
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
 }
 
+/**
+ * Validate card number using Luhn algorithm (Mod 10).
+ */
+function validate_luhn(string $number): bool {
+    $clean = preg_replace('/\D/', '', $number);
+    if ($clean === '' || strlen($clean) < 13 || strlen($clean) > 19) {
+        return false;
+    }
+    $sum = 0;
+    $alt = false;
+    for ($i = strlen($clean) - 1; $i >= 0; $i--) {
+        $digit = (int)$clean[$i];
+        if ($alt) {
+            $digit *= 2;
+            if ($digit > 9) {
+                $digit -= 9;
+            }
+        }
+        $sum += $digit;
+        $alt = !$alt;
+    }
+    return ($sum % 10 === 0);
+}
+
+/**
+ * Validate card expiration date (MM/YY or MM/YYYY) against server date.
+ */
+function validate_card_expiry(string $expiry): bool {
+    $expiry = trim($expiry);
+    if (!preg_match('#^(0[1-9]|1[0-2])\s*/\s*(\d{2}|\d{4})$#', $expiry, $m)) {
+        return false;
+    }
+    $month = (int)$m[1];
+    $yearRaw = (int)$m[2];
+    $year = ($yearRaw < 100) ? 2000 + $yearRaw : $yearRaw;
+
+    $currentYear = (int)date('Y');
+    $currentMonth = (int)date('n');
+
+    if ($year < $currentYear) {
+        return false;
+    }
+    if ($year === $currentYear && $month < $currentMonth) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Validate cardholder name: max 100 characters, letters and spaces only.
+ */
+function validate_cardholder_name(string $name): bool {
+    $name = trim($name);
+    $len = mb_strlen($name, 'UTF-8');
+    if ($len < 1 || $len > 100) {
+        return false;
+    }
+    // Letters (including accented Latin/Vietnamese) and spaces only
+    return (bool)preg_match('/^[\p{L}\s]+$/u', $name);
+}
+
+/**
+ * Validate card CVV / CVC: 3 or 4 digits.
+ */
+function validate_card_cvv(string $cvv): bool {
+    $cvv = trim($cvv);
+    return (bool)preg_match('/^\d{3,4}$/', $cvv);
+}
+
+
 

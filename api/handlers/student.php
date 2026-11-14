@@ -13,6 +13,7 @@ require_once dirname(__DIR__) . '/lib/response.php';
 require_once dirname(__DIR__) . '/lib/audit.php';
 require_once dirname(__DIR__) . '/lib/calc.php';
 require_once dirname(__DIR__) . '/lib/payment_gateway.php';
+require_once dirname(__DIR__) . '/lib/payment.php';
 
 function handle_student_routes(string $method, string $path, array $matches): void {
     $db = get_db_connection();
@@ -362,10 +363,14 @@ function handle_student_routes(string $method, string $path, array $matches): vo
             ]);
         }
 
+        // Payment method mapping:
+        // "Mã QR" stored as 'Mã QR'
+        // "Thẻ Visa/Mastercard" stored as 'Thẻ Visa/Mastercard'
+        // Legacy: 'Chuyển khoản' and 'Thẻ' kept for backward compatibility with existing tests
         $method = trim((string)($input['method'] ?? ''));
-        if (!in_array($method, ['Chuyển khoản', 'Thẻ'], true)) {
-            json_error("Phương thức thanh toán phải là 'Chuyển khoản' hoặc 'Thẻ'.", 'VALIDATION_ERROR', 400, [
-                'method' => "Phương thức thanh toán phải là 'Chuyển khoản' hoặc 'Thẻ'."
+        if (!in_array($method, ['Chuyển khoản', 'Thẻ', 'Mã QR', 'Thẻ Visa/Mastercard'], true)) {
+            json_error("Phương thức thanh toán phải là 'Chuyển khoản', 'Thẻ', 'Mã QR' hoặc 'Thẻ Visa/Mastercard'.", 'VALIDATION_ERROR', 400, [
+                'method' => "Phương thức thanh toán không hợp lệ."
             ]);
         }
 
@@ -375,36 +380,6 @@ function handle_student_routes(string $method, string $path, array $matches): vo
             $feeStmt->execute(['id' => $feeRecordId, 'stId' => $studentId]);
             if (!$feeStmt->fetch()) {
                 json_error('Không tìm thấy hồ sơ học phí.', 'NOT_FOUND', 404);
-            }
-
-            // Kiểm tra lại request_id trong transaction nguyên tử (chống gọi trùng cổng khi có 2 request đồng thời)
-            $chkReqInside = $pdo->prepare(
-                "SELECT l.*, fr.student_id 
-                 FROM ledger_entries l 
-                 JOIN fee_records fr ON l.fee_record_id = fr.id 
-                 WHERE l.request_id = :reqId"
-            );
-            $chkReqInside->execute(['reqId' => $requestId]);
-            $existingEntryInside = $chkReqInside->fetch();
-            if ($existingEntryInside) {
-                if ((int)$existingEntryInside['student_id'] !== $studentId) {
-                    json_error('Không tìm thấy giao dịch.', 'NOT_FOUND', 404);
-                }
-                return $existingEntryInside;
-            }
-
-            $summary = fetch_fee_record_summary($pdo, $feeRecordId);
-            $netDue = (int)$summary['net_due'];
-            $totalPaid = (int)$summary['total_paid'];
-
-            // Hồ sơ nộp thừa -> chặn thanh toán
-            if ($totalPaid > $netDue) {
-                json_error('Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.', 'OVERPAID_BLOCKED', 422);
-            }
-
-            $outstanding = max(0, $netDue - $totalPaid);
-            if ($amount > $outstanding) {
-                json_error('Số tiền vượt quá số còn nợ.', 'OVERPAYMENT_REJECTED', 422);
             }
 
             // Gọi cổng thanh toán giả lập
@@ -422,43 +397,414 @@ function handle_student_routes(string $method, string $path, array $matches): vo
 
             $gatewayRef = $gwRes['transaction_ref'];
 
-            // Sinh số biên lai nguyên tử PT-YYYYMMDD-NNNN
-            $today = date('Y-m-d');
-            $pdo->prepare("INSERT INTO receipt_counters (day, last_no) VALUES (:today, 0) ON DUPLICATE KEY UPDATE day = day")
-                ->execute(['today' => $today]);
-            $pdo->prepare("UPDATE receipt_counters SET last_no = last_no + 1 WHERE day = :today")
-                ->execute(['today' => $today]);
-            $cntStmt = $pdo->prepare("SELECT last_no FROM receipt_counters WHERE day = :today");
-            $cntStmt->execute(['today' => $today]);
-            $lastNo = (int)$cntStmt->fetchColumn();
-            $receiptNo = sprintf("PT-%s-%04d", date('Ymd'), $lastNo);
-
-            $ins = $pdo->prepare(
-                "INSERT INTO ledger_entries (fee_record_id, entry_type, amount, method, entry_date, receipt_no, gateway_ref, request_id, created_by, note, created_at)
-                 VALUES (:frId, 'payment', :amount, :method, :entryDate, :receiptNo, :gwRef, :reqId, :userId, 'Sinh viên thanh toán trực tuyến', NOW())"
+            return execute_payment_transaction(
+                $pdo,
+                $feeRecordId,
+                $amount,
+                $method,
+                date('Y-m-d'),
+                'Sinh viên thanh toán trực tuyến',
+                $requestId,
+                (int)$user['id'],
+                $studentId,
+                $gatewayRef,
+                'student_payment'
             );
-            $ins->execute([
-                'frId'      => $feeRecordId,
-                'amount'    => $amount,
-                'method'    => $method,
-                'entryDate' => $today,
-                'receiptNo' => $receiptNo,
-                'gwRef'     => $gatewayRef,
-                'reqId'     => $requestId,
-                'userId'    => $user['id'],
-            ]);
-            $entryId = (int)$pdo->lastInsertId();
-
-            log_audit((int)$user['id'], 'student_payment', 'ledger_entries', (string)$entryId, [
-                'receipt_no'  => $receiptNo,
-                'amount'      => $amount,
-                'method'      => $method,
-                'gateway_ref' => $gatewayRef,
-                'request_id'  => $requestId
-            ]);
-
-            return $pdo->query("SELECT * FROM ledger_entries WHERE id = {$entryId}")->fetch();
         });
+        json_success($entry, 201);
+    }
+
+    // 5a. POST /api/student/fee-records/{id}/payment-sessions (Khởi tạo phiên thanh toán Mã QR)
+    if (preg_match('#^/api/student/fee-records/(\d+)/payment-sessions$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $feeRecordId = (int)$m[1];
+        $input = get_json_input();
+        validate_allowed_fields($input, ['amount', 'method', 'request_id']);
+
+        $requestId = trim((string)($input['request_id'] ?? ''));
+        if ($requestId === '') {
+            json_error('Vui lòng cung cấp mã yêu cầu (request_id).', 'INVALID_REQUEST_ID', 400, [
+                'request_id' => 'Mã yêu cầu không được để trống.'
+            ]);
+        }
+
+        $rawAmount = $input['amount'] ?? null;
+        if (!is_int($rawAmount) && (!is_string($rawAmount) || !preg_match('/^-?\d+$/', trim($rawAmount)))) {
+            json_error('Số tiền phải là số nguyên dương.', 'VALIDATION_ERROR', 400, [
+                'amount' => 'Số tiền phải là số nguyên dương.'
+            ]);
+        }
+        $amount = (int)$rawAmount;
+        if ($amount <= 0) {
+            json_error('Số tiền phải là số nguyên dương.', 'VALIDATION_ERROR', 400, [
+                'amount' => 'Số tiền phải là số nguyên dương.'
+            ]);
+        }
+
+        // Mapping: "Mã QR" stored as 'Mã QR'
+        $methodVal = trim((string)($input['method'] ?? ''));
+        if ($methodVal !== 'Mã QR') {
+            json_error("Phương thức thanh toán phải là 'Mã QR'.", 'VALIDATION_ERROR', 400, [
+                'method' => "Phương thức thanh toán phải là 'Mã QR'."
+            ]);
+        }
+
+        $feeStmt = $db->prepare("SELECT id, student_id FROM fee_records WHERE id = :id AND student_id = :stId");
+        $feeStmt->execute(['id' => $feeRecordId, 'stId' => $studentId]);
+        if (!$feeStmt->fetch()) {
+            json_error('Không tìm thấy hồ sơ học phí.', 'NOT_FOUND', 404);
+        }
+
+        $summary = fetch_fee_record_summary($db, $feeRecordId);
+        $netDue = (int)($summary['net_due'] ?? 0);
+        $totalPaid = (int)($summary['total_paid'] ?? 0);
+        if ($totalPaid > $netDue) {
+            json_error('Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.', 'OVERPAID_BLOCKED', 422);
+        }
+        $outstanding = max(0, $netDue - $totalPaid);
+        if ($amount > $outstanding) {
+            json_error('Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước.', 'OVERPAYMENT_REJECTED', 422);
+        }
+
+        // Idempotency check trên request_id
+        $chkSess = $db->prepare("SELECT * FROM payment_sessions WHERE request_id = :reqId");
+        $chkSess->execute(['reqId' => $requestId]);
+        $existingSess = $chkSess->fetch();
+        if ($existingSess) {
+            if ((int)$existingSess['student_id'] !== $studentId) {
+                json_error('Không tìm thấy phiên thanh toán.', 'NOT_FOUND', 404);
+            }
+            if ($existingSess['status'] === 'pending' && strtotime($existingSess['expires_at']) <= time()) {
+                $db->prepare("UPDATE payment_sessions SET status = 'expired' WHERE id = :id")->execute(['id' => $existingSess['id']]);
+                $existingSess['status'] = 'expired';
+            }
+            $payload = sprintf(
+                "TUITION|SESSION=%d|FEE=%d|AMT=%d|EXP=%s",
+                (int)$existingSess['id'],
+                (int)$existingSess['fee_record_id'],
+                (int)$existingSess['amount'],
+                $existingSess['expires_at']
+            );
+
+            json_success([
+                'session_id'         => (int)$existingSess['id'],
+                'fee_record_id'      => (int)$existingSess['fee_record_id'],
+                'amount'             => (int)$existingSess['amount'],
+                'method'             => $existingSess['method'],
+                'status'             => $existingSess['status'],
+                'payload'            => $payload,
+                'qr_data'            => $payload,
+                'expires_at'         => $existingSess['expires_at'],
+                'simulation_enabled' => is_simulation_enabled()
+            ], 200);
+        }
+
+        // Hủy tất cả các phiên pending trước đó của cùng sinh viên và hồ sơ học phí
+        $cancelPrev = $db->prepare(
+            "UPDATE payment_sessions 
+             SET status = 'cancelled' 
+             WHERE student_id = :stId AND fee_record_id = :frId AND status = 'pending'"
+        );
+        $cancelPrev->execute(['stId' => $studentId, 'frId' => $feeRecordId]);
+
+        // Thời hạn 5 phút theo giờ server
+        $expiresAt = date('Y-m-d H:i:s', time() + 5 * 60);
+        $ins = $db->prepare(
+            "INSERT INTO payment_sessions (student_id, fee_record_id, status, amount, method, request_id, expires_at, created_at)
+             VALUES (:stId, :frId, 'pending', :amount, 'Mã QR', :reqId, :expiresAt, NOW())"
+        );
+        $ins->execute([
+            'stId'      => $studentId,
+            'frId'      => $feeRecordId,
+            'amount'    => $amount,
+            'reqId'     => $requestId,
+            'expiresAt' => $expiresAt
+        ]);
+        $newSessId = (int)$db->lastInsertId();
+
+        $payload = sprintf(
+            "TUITION|SESSION=%d|FEE=%d|AMT=%d|EXP=%s",
+            $newSessId,
+            $feeRecordId,
+            $amount,
+            $expiresAt
+        );
+
+        json_success([
+            'session_id'         => $newSessId,
+            'fee_record_id'      => $feeRecordId,
+            'amount'             => $amount,
+            'method'             => 'Mã QR',
+            'status'             => 'pending',
+            'payload'            => $payload,
+            'qr_data'            => $payload,
+            'expires_at'         => $expiresAt,
+            'simulation_enabled' => is_simulation_enabled()
+        ], 201);
+    }
+
+    // 5b. GET /api/student/payment-sessions/{id} (Kiểm tra trạng thái phiên thanh toán)
+    if (preg_match('#^/api/student/payment-sessions/(\d+)$#', $path, $m) && $method === 'GET') {
+        $sessId = (int)$m[1];
+        $stmt = $db->prepare("SELECT * FROM payment_sessions WHERE id = :id AND student_id = :stId");
+        $stmt->execute(['id' => $sessId, 'stId' => $studentId]);
+        $sess = $stmt->fetch();
+        if (!$sess) {
+            json_error('Không tìm thấy phiên thanh toán.', 'NOT_FOUND', 404);
+        }
+
+        $now = time();
+        $expTime = strtotime($sess['expires_at']);
+        if ($sess['status'] === 'pending' && $expTime <= $now) {
+            $db->prepare("UPDATE payment_sessions SET status = 'expired' WHERE id = :id")->execute(['id' => $sessId]);
+            $sess['status'] = 'expired';
+        }
+        $remainingSeconds = max(0, $expTime - $now);
+
+        json_success([
+            'session_id'         => (int)$sess['id'],
+            'fee_record_id'      => (int)$sess['fee_record_id'],
+            'status'             => $sess['status'],
+            'amount'             => (int)$sess['amount'],
+            'method'             => $sess['method'],
+            'expires_at'         => $sess['expires_at'],
+            'confirmed_at'       => $sess['confirmed_at'],
+            'remaining_seconds'  => $remainingSeconds,
+            'simulation_enabled' => is_simulation_enabled()
+        ], 200);
+    }
+
+    // 5c. POST /api/student/payment-sessions/{id}/simulate-confirm (Mô phỏng xác nhận thanh toán QR)
+    if (preg_match('#^/api/student/payment-sessions/(\d+)/simulate-confirm$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $sessId = (int)$m[1];
+
+        if (!is_simulation_enabled()) {
+            json_error('Chức năng mô phỏng thanh toán đã bị vô hiệu hóa.', 'NOT_FOUND', 404);
+        }
+
+        $confirmRes = db_transaction(function(PDO $pdo) use ($sessId, $studentId, $user) {
+            $stmt = $pdo->prepare("SELECT * FROM payment_sessions WHERE id = :id AND student_id = :stId FOR UPDATE");
+            $stmt->execute(['id' => $sessId, 'stId' => $studentId]);
+            $sess = $stmt->fetch();
+            if (!$sess) {
+                json_error('Không tìm thấy phiên thanh toán.', 'NOT_FOUND', 404);
+            }
+
+            if ($sess['status'] === 'confirmed') {
+                json_error('Phiên thanh toán đã được xác nhận trước đó.', 'ALREADY_CONFIRMED', 409);
+            }
+
+            if ($sess['status'] === 'cancelled') {
+                json_error('Phiên thanh toán đã bị hủy.', 'SESSION_CANCELLED', 422);
+            }
+
+            if ($sess['status'] === 'expired' || strtotime($sess['expires_at']) <= time()) {
+                $pdo->prepare("UPDATE payment_sessions SET status = 'expired' WHERE id = :id")->execute(['id' => $sessId]);
+                $pdo->commit();
+                json_error('Mã QR đã hết hạn. Vui lòng tạo mã mới.', 'SESSION_EXPIRED', 422);
+            }
+
+            // Kiểm tra số nợ thực tế của hồ sơ
+            $summary = fetch_fee_record_summary($pdo, (int)$sess['fee_record_id']);
+            $netDue = (int)($summary['net_due'] ?? 0);
+            $totalPaid = (int)($summary['total_paid'] ?? 0);
+            $outstanding = max(0, $netDue - $totalPaid);
+            $amount = (int)$sess['amount'];
+
+            if ($totalPaid > $netDue || $amount > $outstanding) {
+                $pdo->prepare("UPDATE payment_sessions SET status = 'cancelled' WHERE id = :id")->execute(['id' => $sessId]);
+                $pdo->commit();
+                json_error('Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước.', 'OVERPAYMENT_REJECTED', 422);
+            }
+
+            // "Mã QR" stored as 'Mã QR'
+            $entry = execute_payment_transaction(
+                $pdo,
+                (int)$sess['fee_record_id'],
+                $amount,
+                'Mã QR',
+                date('Y-m-d'),
+                'Sinh viên thanh toán quét mã QR (mô phỏng)',
+                $sess['request_id'],
+                (int)$user['id'],
+                $studentId,
+                'QR-SIM-' . $sess['id'],
+                'student_payment'
+            );
+
+            $pdo->prepare("UPDATE payment_sessions SET status = 'confirmed', confirmed_at = NOW() WHERE id = :id")->execute(['id' => $sessId]);
+
+            $sess['status'] = 'confirmed';
+            $sess['confirmed_at'] = date('Y-m-d H:i:s');
+
+            return ['session' => $sess, 'ledger_entry' => $entry];
+        });
+
+        json_success($confirmRes, 200);
+    }
+
+    // 5d. POST /api/student/payment-sessions/{id}/cancel (Hủy phiên thanh toán QR)
+    if (preg_match('#^/api/student/payment-sessions/(\d+)/cancel$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $sessId = (int)$m[1];
+
+        $cancelRes = db_transaction(function(PDO $pdo) use ($sessId, $studentId) {
+            $stmt = $pdo->prepare("SELECT * FROM payment_sessions WHERE id = :id AND student_id = :stId FOR UPDATE");
+            $stmt->execute(['id' => $sessId, 'stId' => $studentId]);
+            $sess = $stmt->fetch();
+            if (!$sess) {
+                json_error('Không tìm thấy phiên thanh toán.', 'NOT_FOUND', 404);
+            }
+
+            if ($sess['status'] === 'confirmed') {
+                json_error('Không thể hủy phiên thanh toán đã hoàn thành.', 'CANNOT_CANCEL', 422);
+            }
+
+            if ($sess['status'] !== 'cancelled') {
+                $pdo->prepare("UPDATE payment_sessions SET status = 'cancelled' WHERE id = :id")->execute(['id' => $sessId]);
+            }
+
+            return ['message' => 'Phiên thanh toán đã được hủy thành công.'];
+        });
+
+        json_success($cancelRes, 200);
+    }
+
+    // 5e. POST /api/student/fee-records/{id}/card-payments (Thanh toán Thẻ Visa/Mastercard trực tuyến)
+    if (preg_match('#^/api/student/fee-records/(\d+)/card-payments$#', $path, $m) && $method === 'POST') {
+        verify_csrf_token();
+        $feeRecordId = (int)$m[1];
+        $input = get_json_input();
+        validate_allowed_fields($input, ['amount', 'card_number', 'cardholder_name', 'expiry', 'cvv', 'request_id']);
+
+        $requestId = trim((string)($input['request_id'] ?? ''));
+        if ($requestId === '') {
+            json_error('Vui lòng cung cấp mã yêu cầu (request_id).', 'INVALID_REQUEST_ID', 400, [
+                'request_id' => 'Mã yêu cầu không được để trống.'
+            ]);
+        }
+
+        $rawAmount = $input['amount'] ?? null;
+        if (!is_int($rawAmount) && (!is_string($rawAmount) || !preg_match('/^-?\d+$/', trim($rawAmount)))) {
+            json_error('Số tiền phải là số nguyên dương.', 'VALIDATION_ERROR', 400, [
+                'amount' => 'Số tiền phải là số nguyên dương.'
+            ]);
+        }
+        $amount = (int)$rawAmount;
+        if ($amount <= 0) {
+            json_error('Số tiền phải là số nguyên dương.', 'VALIDATION_ERROR', 400, [
+                'amount' => 'Số tiền phải là số nguyên dương.'
+            ]);
+        }
+
+        // Kiểm tra hợp lệ các trường thẻ
+        $errors = [];
+        $rawCard = (string)($input['card_number'] ?? '');
+        $cleanCard = preg_replace('/[\s-]+/', '', $rawCard);
+        if ($cleanCard === '' || !ctype_digit($cleanCard) || strlen($cleanCard) < 13 || strlen($cleanCard) > 19 || !validate_luhn($cleanCard)) {
+            $errors['card_number'] = 'Số thẻ không hợp lệ.';
+        }
+
+        $name = (string)($input['cardholder_name'] ?? '');
+        if (!validate_cardholder_name($name)) {
+            $errors['cardholder_name'] = 'Tên chủ thẻ không hợp lệ.';
+        }
+
+        $expiry = (string)($input['expiry'] ?? '');
+        if (!validate_card_expiry($expiry)) {
+            $errors['expiry'] = 'Ngày hết hạn không hợp lệ hoặc thẻ đã hết hạn.';
+        }
+
+        $cvv = (string)($input['cvv'] ?? '');
+        if (!validate_card_cvv($cvv)) {
+            $errors['cvv'] = 'Mã CVV phải gồm 3 hoặc 4 chữ số.';
+        }
+
+        if (!empty($errors)) {
+            unset($rawCard, $cleanCard, $cvv, $expiry, $input['card_number'], $input['cvv'], $input['expiry']);
+            json_error('Thông tin thẻ không hợp lệ.', 'VALIDATION_ERROR', 400, $errors);
+        }
+
+        // Kiểm tra quyền sở hữu hồ sơ học phí
+        $feeStmt = $db->prepare("SELECT id, student_id FROM fee_records WHERE id = :id AND student_id = :stId");
+        $feeStmt->execute(['id' => $feeRecordId, 'stId' => $studentId]);
+        if (!$feeStmt->fetch()) {
+            unset($rawCard, $cleanCard, $cvv, $expiry, $input);
+            json_error('Không tìm thấy hồ sơ học phí.', 'NOT_FOUND', 404);
+        }
+
+        // Idempotency check trước khi gọi cổng thanh toán
+        $chkReq = $db->prepare(
+            "SELECT l.*, fr.student_id 
+             FROM ledger_entries l 
+             JOIN fee_records fr ON l.fee_record_id = fr.id 
+             WHERE l.request_id = :reqId"
+        );
+        $chkReq->execute(['reqId' => $requestId]);
+        $existingEntry = $chkReq->fetch();
+        if ($existingEntry) {
+            unset($rawCard, $cleanCard, $cvv, $expiry, $input);
+            if ((int)$existingEntry['student_id'] !== $studentId) {
+                json_error('Không tìm thấy giao dịch.', 'NOT_FOUND', 404);
+            }
+            json_success($existingEntry, 200);
+        }
+
+        $summary = fetch_fee_record_summary($db, $feeRecordId);
+        $netDue = (int)($summary['net_due'] ?? 0);
+        $totalPaid = (int)($summary['total_paid'] ?? 0);
+        if ($totalPaid > $netDue) {
+            unset($rawCard, $cleanCard, $cvv, $expiry, $input);
+            json_error('Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.', 'OVERPAID_BLOCKED', 422);
+        }
+        $outstanding = max(0, $netDue - $totalPaid);
+        if ($amount > $outstanding) {
+            unset($rawCard, $cleanCard, $cvv, $expiry, $input);
+            json_error('Số tiền vượt quá số còn nợ. Vui lòng lập yêu cầu hoàn tiền trước.', 'OVERPAYMENT_REJECTED', 422);
+        }
+
+        // Gọi cổng thanh toán thẻ giả lập (SimulatedCardGateway)
+        // "Thẻ Visa/Mastercard" stored as 'Thẻ Visa/Mastercard'
+        $gateway = new SimulatedCardGateway();
+        $gwRes = $gateway->charge($amount, 'Thẻ Visa/Mastercard', ['card_number' => $cleanCard]);
+
+        // Xóa thông tin nhạy cảm khỏi bộ nhớ ngay lập tức
+        unset($rawCard, $cleanCard, $cvv, $expiry, $input['card_number'], $input['cvv'], $input['expiry']);
+
+        if ($gwRes['status'] === 'timeout') {
+            json_error('Thanh toán chưa được xử lý. Vui lòng thử lại sau.', 'GATEWAY_TIMEOUT', 502);
+        }
+        if ($gwRes['status'] === 'declined') {
+            json_error('Thẻ bị từ chối. Vui lòng kiểm tra thông tin hoặc dùng thẻ khác.', 'CARD_DECLINED', 422);
+        }
+        if ($gwRes['status'] !== 'success') {
+            json_error('Giao dịch thẻ thất bại.', 'GATEWAY_ERROR', 502);
+        }
+
+        $gatewayRef = $gwRes['transaction_ref'];
+        $brand = $gwRes['brand'] ?? 'Visa/Mastercard';
+        $last4 = $gwRes['last4'] ?? '0000';
+        $cardNote = sprintf('Thanh toán thẻ %s (*%s)', $brand, $last4);
+
+        $entry = db_transaction(function(PDO $pdo) use ($feeRecordId, $studentId, $amount, $cardNote, $requestId, $user, $gatewayRef, $brand, $last4) {
+            return execute_payment_transaction(
+                $pdo,
+                $feeRecordId,
+                $amount,
+                'Thẻ Visa/Mastercard',
+                date('Y-m-d'),
+                $cardNote,
+                $requestId,
+                (int)$user['id'],
+                $studentId,
+                $gatewayRef,
+                'student_payment',
+                $brand,
+                $last4
+            );
+        }, $db);
+
         json_success($entry, 201);
     }
 
@@ -721,6 +1067,201 @@ function handle_student_routes(string $method, string $path, array $matches): vo
             'entries'         => array_values($filtered),
             'pending_refunds' => $pendingRefunds
         ]);
+    }
+
+    // 9. GET /api/student/bills/{ledgerEntryId} và /api/student/bills/{ledgerEntryId}/download
+    if (preg_match('#^/api/student/bills/(\d+)(/download)?$#', $path, $matches) && $method === 'GET') {
+        $user = require_student();
+        $studentId = (int)$user['student_id'];
+        $entryId = (int)$matches[1];
+        $isDownload = !empty($matches[2]);
+
+        $bStmt = $db->prepare(
+            "SELECT b.*, l.entry_date, l.amount, l.method, l.receipt_no, fr.student_id
+             FROM bills b
+             JOIN ledger_entries l ON b.ledger_entry_id = l.id
+             JOIN fee_records fr ON l.fee_record_id = fr.id
+             WHERE b.ledger_entry_id = :lId AND fr.student_id = :stId"
+        );
+        $bStmt->execute(['lId' => $entryId, 'stId' => $studentId]);
+        $bill = $bStmt->fetch();
+
+        if (!$bill) {
+            json_error('Không tìm thấy hóa đơn.', 'NOT_FOUND', 404);
+        }
+
+        $snapshot = json_decode((string)$bill['snapshot'], true);
+        if (!is_array($snapshot)) {
+            $snapshot = [];
+        }
+
+        if ($isDownload) {
+            // Self-contained HTML document
+            $billNo = $bill['bill_no'];
+            $filename = sprintf('bill-%s.html', $billNo);
+
+            header('Content-Type: text/html; charset=utf-8');
+            header(sprintf('Content-Disposition: attachment; filename="%s"', $filename));
+
+            $esc = function($val) {
+                return htmlspecialchars((string)($val ?? ''), ENT_QUOTES, 'UTF-8');
+            };
+            $fmtVND = function($num) {
+                return number_format((float)($num ?? 0), 0, ',', '.') . ' ₫';
+            };
+
+            $schoolName = $esc($snapshot['school_name'] ?? '[Tên trường]');
+            $studentCode = $esc($snapshot['student_code'] ?? '');
+            $fullName = $esc($snapshot['full_name'] ?? '');
+            $className = $esc($snapshot['class'] ?? $snapshot['class_name'] ?? '');
+            $semesterLabel = $esc($snapshot['semester_label'] ?? '');
+            $credits = (int)($snapshot['registered_credits'] ?? 0);
+            $gross = $fmtVND($snapshot['gross_tuition'] ?? 0);
+            $exAmt = $fmtVND($snapshot['exemption_amount'] ?? 0);
+            $exReason = $esc($snapshot['exemption_reason'] ?? '');
+            $netDue = $fmtVND($snapshot['net_due'] ?? 0);
+            $paidBefore = $fmtVND($snapshot['total_paid_before'] ?? 0);
+            $paymentAmount = $fmtVND($snapshot['this_payment_amount'] ?? $snapshot['amount'] ?? 0);
+            $paidAfter = $fmtVND($snapshot['total_paid_after'] ?? 0);
+            $remBal = $fmtVND($snapshot['remaining_balance'] ?? 0);
+            $methodLabel = $esc($snapshot['method_label'] ?? $snapshot['method'] ?? '');
+            $receiptNo = $esc($snapshot['receipt_number'] ?? $snapshot['receipt_no'] ?? '');
+            $timestamp = $esc($snapshot['payment_timestamp'] ?? $bill['created_at']);
+
+            $cardBrand = $snapshot['gateway_brand'] ?? null;
+            $cardLast4 = $snapshot['gateway_last4'] ?? null;
+            $cardInfoHtml = '';
+            if (!empty($cardBrand) || !empty($cardLast4)) {
+                $cardInfoHtml = sprintf(
+                    '<p style="margin: 0.5rem 0; font-size: 13px;"><strong>Thông tin thẻ:</strong> %s (kết thúc bằng *%s)</p>',
+                    $esc($cardBrand ?? 'Thẻ'),
+                    $esc($cardLast4 ?? '0000')
+                );
+            }
+
+            echo '<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Hóa đơn ' . $esc($billNo) . '</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 24px; color: #1e293b; background: #fff; line-height: 1.5; font-size: 14px; }
+  .bill-container { max-width: 680px; margin: 0 auto; border: 1px solid #cbd5e1; border-radius: 8px; padding: 28px; background: #fff; }
+  .header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 16px; margin-bottom: 20px; }
+  .header h1 { margin: 0 0 6px 0; font-size: 20px; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.5px; }
+  .header .bill-title { font-size: 16px; font-weight: 700; color: #2563eb; margin: 4px 0; }
+  .header .meta { font-size: 12px; color: #64748b; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+  .field-label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+  .field-value { font-size: 14px; font-weight: 500; color: #0f172a; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; margin-bottom: 18px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+  th { background-color: #f8fafc; font-weight: 600; color: #475569; }
+  td.num, th.num { text-align: right; }
+  .highlight-row { background-color: #f0fdf4; font-weight: 700; color: #166534; }
+  .footer { margin-top: 24px; padding-top: 16px; border-top: 1px dashed #cbd5e1; font-size: 12px; color: #64748b; text-align: center; }
+  @media print {
+    body { padding: 0; background: #fff; }
+    .bill-container { border: none; padding: 0; width: 100%; max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="bill-container">
+  <div class="header">
+    <h1>' . $schoolName . '</h1>
+    <div class="bill-title">HÓA ĐƠN THANH TOÁN HỌC PHÍ</div>
+    <div class="meta">Số hóa đơn: <strong>' . $esc($billNo) . '</strong> | Ngày: ' . $timestamp . '</div>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="field-label">Mã sinh viên</div>
+      <div class="field-value">' . $studentCode . '</div>
+    </div>
+    <div>
+      <div class="field-label">Họ và tên</div>
+      <div class="field-value">' . $fullName . '</div>
+    </div>
+    <div>
+      <div class="field-label">Lớp sinh viên</div>
+      <div class="field-value">' . $className . '</div>
+    </div>
+    <div>
+      <div class="field-label">Học kỳ</div>
+      <div class="field-value">' . $semesterLabel . ' (' . $credits . ' tín chỉ)</div>
+    </div>
+    <div>
+      <div class="field-label">Phương thức thanh toán</div>
+      <div class="field-value">' . $methodLabel . '</div>
+    </div>
+    <div>
+      <div class="field-label">Số biên lai</div>
+      <div class="field-value">' . $receiptNo . '</div>
+    </div>
+  </div>
+
+  ' . $cardInfoHtml . '
+
+  <table>
+    <thead>
+      <tr>
+        <th>Nội dung thanh toán</th>
+        <th class="num">Số tiền</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Học phí gốc (Gross)</td>
+        <td class="num">' . $gross . '</td>
+      </tr>
+      <tr>
+        <td>Miễn giảm học phí' . ($exReason !== '' ? ' (' . $exReason . ')' : '') . '</td>
+        <td class="num">' . $exAmt . '</td>
+      </tr>
+      <tr>
+        <td>Học phí thực nộp (Net Due)</td>
+        <td class="num"><strong>' . $netDue . '</strong></td>
+      </tr>
+      <tr>
+        <td>Tổng số tiền đã nộp trước đợt này</td>
+        <td class="num">' . $paidBefore . '</td>
+      </tr>
+      <tr class="highlight-row">
+        <td>Số tiền thanh toán lần này</td>
+        <td class="num">' . $paymentAmount . '</td>
+      </tr>
+      <tr>
+        <td>Tổng số tiền đã nộp sau đợt này</td>
+        <td class="num">' . $paidAfter . '</td>
+      </tr>
+      <tr>
+        <td>Số dư nợ còn lại</td>
+        <td class="num"><strong>' . $remBal . '</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <p style="margin: 0;">Hóa đơn điện tử được khởi tạo tự động từ hệ thống quản lý học phí trực tuyến.</p>
+    <p style="margin: 4px 0 0 0;">Cảm ơn bạn đã hoàn thành nghĩa vụ học phí.</p>
+  </div>
+</div>
+</body>
+</html>';
+            exit;
+        }
+
+        $bill['snapshot'] = $snapshot;
+        $bill['bill'] = [
+            'id'              => (int)$bill['id'],
+            'bill_no'         => $bill['bill_no'],
+            'ledger_entry_id' => (int)$bill['ledger_entry_id'],
+            'created_at'      => $bill['created_at'],
+            'snapshot'        => $snapshot
+        ];
+        json_success($bill);
     }
 
     json_error('Không tìm thấy tài nguyên yêu cầu.', 'ENDPOINT_NOT_FOUND', 404);

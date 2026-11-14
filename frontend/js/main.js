@@ -465,8 +465,90 @@
   }
 
   /* ==========================================================================
-     2. XÁC THỰC & ĐĂNG NHẬP / ĐĂNG XUẤT (AUTHENTICATION)
+     2. XÁC THỰC & ĐĂNG NHẬP / ĐĂNG XUẤT (AUTHENTICATION) & QUẢN LÝ TAB
      ========================================================================== */
+
+  const TAB_TRACKER_KEY = 'tuition_tab_tracker';
+  const TAB_CHANNEL_NAME = 'tuition_tabs_channel';
+  let inMemoryLogoutToken = null;
+  let isReloading = false;
+  let tabChannel = null;
+
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      tabChannel = new BroadcastChannel(TAB_CHANNEL_NAME);
+      tabChannel.onmessage = (ev) => {
+        if (ev && ev.data && ev.data.type === 'LOGOUT') {
+          onLoggedOut();
+        }
+      };
+    }
+  } catch (e) {
+    tabChannel = null;
+  }
+
+  function getTabCount() {
+    try {
+      const raw = localStorage.getItem(TAB_TRACKER_KEY);
+      if (!raw) return 0;
+      const data = JSON.parse(raw);
+      if (!data || typeof data.count !== 'number') return 0;
+      // Counter quá 10 phút được xem là không hợp lệ (stale do crash)
+      if (Date.now() - (data.lastUpdated || 0) > 10 * 60 * 1000) {
+        return 0;
+      }
+      return Math.max(0, data.count);
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function setTabCount(cnt) {
+    try {
+      localStorage.setItem(TAB_TRACKER_KEY, JSON.stringify({
+        count: Math.max(0, cnt),
+        lastUpdated: Date.now()
+      }));
+    } catch (e) {}
+  }
+
+  function incrementTabCount() {
+    const current = getTabCount();
+    setTabCount(current + 1);
+  }
+
+  function decrementTabCount() {
+    const current = getTabCount();
+    const updated = Math.max(0, current - 1);
+    setTabCount(updated);
+    return updated;
+  }
+
+  // Lắng nghe thao tác reload bằng phím tắt
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
+      isReloading = true;
+    }
+  });
+
+  window.addEventListener('pagehide', (e) => {
+    // Dừng toàn bộ timer, polling khi rời trang
+    stopBadgePolling();
+    closeStudentQrSession();
+
+    if (isReloading || e.persisted) {
+      return;
+    }
+
+    const remainingTabs = decrementTabCount();
+    if (remainingTabs <= 0 && inMemoryLogoutToken && typeof navigator.sendBeacon === 'function') {
+      try {
+        const beaconUrl = (typeof Api !== 'undefined' && Api.getBaseUrl) ? Api.getBaseUrl() + '/logout-beacon' : '/api/logout-beacon';
+        const blob = new Blob([JSON.stringify({ logout_token: inMemoryLogoutToken })], { type: 'application/json' });
+        navigator.sendBeacon(beaconUrl, blob);
+      } catch (err) {}
+    }
+  });
 
   async function checkAuthSession() {
     try {
@@ -483,6 +565,9 @@
 
   function onLoginSuccess(user) {
     AppState.currentUser = user;
+    if (user.logout_token) {
+      inMemoryLogoutToken = user.logout_token;
+    }
     if (user.csrf_token) {
       Api.setCsrfToken(user.csrf_token);
     }
@@ -537,7 +622,9 @@
 
   function onLoggedOut() {
     stopBadgePolling();
+    closeStudentQrSession();
 
+    inMemoryLogoutToken = null;
     AppState.currentUser = null;
     Api.setCsrfToken(null);
 
@@ -608,11 +695,19 @@
   }
 
   async function handleLogout() {
+    stopBadgePolling();
+    closeStudentQrSession();
     try {
       await Api.post('/logout');
     } catch (e) {
       // Bỏ qua lỗi mạng khi logout
     }
+    try {
+      localStorage.removeItem(TAB_TRACKER_KEY);
+      if (tabChannel) {
+        tabChannel.postMessage({ type: 'LOGOUT' });
+      }
+    } catch (e) {}
     onLoggedOut();
     showToast('Đã đăng xuất khỏi hệ thống.');
   }
@@ -976,6 +1071,10 @@
     AppState.currentTab = tabName;
     AppState.currentSubView = null;
 
+    if (tabName !== 'student-payments') {
+      closeStudentQrSession();
+    }
+
     const studentTabButtons = document.querySelectorAll('#student-app-container .nav-tabs button[role="tab"]');
     studentTabButtons.forEach(btn => {
       const isSelected = (btn.id === `tab-${tabName}`);
@@ -1035,7 +1134,7 @@
 
     dropdownIds.forEach(id => {
       const el = document.getElementById(id);
-      if (!el) return;
+      if (!el || el.tagName !== 'SELECT') return;
 
       const currentVal = el.value;
       const isFilter = (id !== 'fee-semester-select');
@@ -1772,15 +1871,12 @@
   let _lastDuplicateExistingId = null;
 
   async function checkDuplicateFeeRecord() {
-    const studentSelect = document.getElementById('fee-student-select');
-    const semesterSelect = document.getElementById('fee-semester-select');
+    const studentId = document.getElementById('fee-student-id')?.value || document.getElementById('fee-student-select')?.value;
+    const semesterId = document.getElementById('fee-semester-id')?.value || document.getElementById('fee-semester-select')?.value;
     const warningEl = document.getElementById('fee-duplicate-inline-warning');
     const linkEl = document.getElementById('link-existing-fee-record');
 
-    if (!studentSelect || !semesterSelect || !warningEl) return;
-
-    const studentId = studentSelect.value;
-    const semesterId = semesterSelect.value;
+    if (!warningEl) return;
 
     if (!studentId || !semesterId) {
       warningEl.style.display = 'none';
@@ -1839,6 +1935,20 @@
     setElementText('fee-gross-preview', '0 ₫');
     document.getElementById('fee-rate-display').value = '';
 
+    const stInput = document.getElementById('fee-student-search-input');
+    const stId = document.getElementById('fee-student-id');
+    const semInput = document.getElementById('fee-semester-search-input');
+    const semId = document.getElementById('fee-semester-id');
+    if (stInput) stInput.value = '';
+    if (stId) stId.value = '';
+    if (semInput) semInput.value = '';
+    if (semId) semId.value = '';
+
+    const stList = document.getElementById('fee-student-listbox');
+    if (stList) stList.style.display = 'none';
+    const semList = document.getElementById('fee-semester-listbox');
+    if (semList) semList.style.display = 'none';
+
     const alertEl = document.getElementById('fee-duplicate-top-alert');
     if (alertEl) alertEl.style.display = 'none';
     const warningEl = document.getElementById('fee-duplicate-inline-warning');
@@ -1848,12 +1958,11 @@
   }
 
   function updateFeeGrossPreview() {
-    const semSelect = document.getElementById('fee-semester-select');
+    const semId = document.getElementById('fee-semester-id')?.value || document.getElementById('fee-semester-select')?.value;
     const creditsInput = document.getElementById('fee-credits-input');
     const rateDisplay = document.getElementById('fee-rate-display');
     const grossPreview = document.getElementById('fee-gross-preview');
 
-    const semId = semSelect.value;
     const credits = parseInt(creditsInput.value, 10) || 0;
 
     const rate = AppState.rates.find(r => String(r.semester_id) === String(semId));
@@ -1864,6 +1973,248 @@
     grossPreview.textContent = Calc.formatVND(gross);
 
     checkDuplicateFeeRecord();
+  }
+
+  /* ==========================================================================
+     COMBOBOX SEARCH (ISSUE 2): TÌM KIẾM SINH VIÊN & HỌC KỲ KHI TẠO HỒ SƠ
+     ========================================================================== */
+
+  function initCombobox({
+    inputEl,
+    hiddenEl,
+    listboxEl,
+    errorEl,
+    searchEndpoint,
+    emptyMessage,
+    formatItem,
+    formatValue,
+    onSelect
+  }) {
+    if (!inputEl || !hiddenEl || !listboxEl) return;
+
+    let debounceTimer = null;
+    let abortController = null;
+    let currentRequestId = 0;
+    let activeIndex = -1;
+    let currentResults = [];
+
+    function closeList() {
+      listboxEl.style.display = 'none';
+      inputEl.setAttribute('aria-expanded', 'false');
+      inputEl.removeAttribute('aria-activedescendant');
+      activeIndex = -1;
+    }
+
+    function openList() {
+      listboxEl.style.display = 'block';
+      inputEl.setAttribute('aria-expanded', 'true');
+    }
+
+    function highlightOption(index) {
+      const items = listboxEl.querySelectorAll('[role="option"]');
+      items.forEach((item, i) => {
+        const isSelected = (i === index);
+        item.classList.toggle('active', isSelected);
+        item.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        if (isSelected) {
+          inputEl.setAttribute('aria-activedescendant', item.id);
+          item.scrollIntoView({ block: 'nearest' });
+        }
+      });
+      if (index === -1) {
+        inputEl.removeAttribute('aria-activedescendant');
+      }
+      activeIndex = index;
+    }
+
+    function selectOption(index) {
+      if (index < 0 || index >= currentResults.length) return;
+      const item = currentResults[index];
+      hiddenEl.value = item.id;
+      inputEl.value = formatValue(item);
+      if (errorEl) errorEl.textContent = '';
+      closeList();
+      if (onSelect) onSelect(item);
+    }
+
+    function renderResults(results) {
+      listboxEl.innerHTML = '';
+      currentResults = results;
+      activeIndex = -1;
+
+      if (!results || results.length === 0) {
+        const li = document.createElement('li');
+        li.className = 'search-dropdown-item empty-state';
+        li.style.padding = '0.6rem 0.75rem';
+        li.style.color = '#64748b';
+        li.style.fontStyle = 'italic';
+        li.textContent = 'Không tìm thấy';
+        listboxEl.appendChild(li);
+        openList();
+        return;
+      }
+
+      results.forEach((item, index) => {
+        const li = document.createElement('li');
+        li.id = `${inputEl.id}-opt-${item.id}`;
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', 'false');
+        li.className = 'search-dropdown-item';
+        li.style.padding = '0.5rem 0.75rem';
+        li.style.cursor = 'pointer';
+        li.style.borderBottom = '1px solid #f1f5f9';
+        // Render textContent an toàn tuyệt đối
+        li.textContent = formatItem(item);
+
+        li.addEventListener('mouseenter', () => {
+          highlightOption(index);
+        });
+
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          selectOption(index);
+        });
+
+        listboxEl.appendChild(li);
+      });
+
+      openList();
+    }
+
+    function renderEmptyPrompt(msg) {
+      listboxEl.innerHTML = '';
+      currentResults = [];
+      activeIndex = -1;
+
+      const li = document.createElement('li');
+      li.className = 'search-dropdown-item empty-state';
+      li.style.padding = '0.6rem 0.75rem';
+      li.style.color = '#64748b';
+      li.style.fontStyle = 'italic';
+      li.textContent = msg || emptyMessage || 'Nhập từ khóa để tìm kiếm.';
+      listboxEl.appendChild(li);
+      openList();
+    }
+
+    async function executeSearch(query) {
+      const q = (query || '').trim();
+      if (q === '') {
+        renderEmptyPrompt();
+        return;
+      }
+
+      if (abortController) {
+        abortController.abort();
+      }
+      abortController = new AbortController();
+      const thisReqId = ++currentRequestId;
+
+      try {
+        const url = `${searchEndpoint}?q=${encodeURIComponent(q)}`;
+        const res = await Api.get(url, { signal: abortController.signal });
+        if (thisReqId !== currentRequestId) return;
+
+        if (res && res.ok) {
+          renderResults(res.data || []);
+        } else {
+          renderResults([]);
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        if (thisReqId !== currentRequestId) return;
+        renderResults([]);
+      }
+    }
+
+    // Input typing listener with 300ms debounce
+    inputEl.addEventListener('input', () => {
+      hiddenEl.value = '';
+      if (errorEl) errorEl.textContent = '';
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        executeSearch(inputEl.value);
+      }, 300);
+    });
+
+    inputEl.addEventListener('focus', () => {
+      if (inputEl.value.trim() !== '') {
+        executeSearch(inputEl.value);
+      } else {
+        renderEmptyPrompt();
+      }
+    });
+
+    inputEl.addEventListener('blur', () => {
+      setTimeout(() => {
+        closeList();
+      }, 200);
+    });
+
+    // Keyboard navigation
+    inputEl.addEventListener('keydown', (e) => {
+      if (listboxEl.style.display === 'none') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          openList();
+          e.preventDefault();
+        }
+        return;
+      }
+
+      const count = currentResults.length;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (count === 0) return;
+        const next = (activeIndex + 1 >= count) ? 0 : activeIndex + 1;
+        highlightOption(next);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (count === 0) return;
+        const prev = (activeIndex - 1 < 0) ? count - 1 : activeIndex - 1;
+        highlightOption(prev);
+      } else if (e.key === 'Enter') {
+        if (activeIndex >= 0 && activeIndex < count) {
+          e.preventDefault();
+          selectOption(activeIndex);
+        } else if (count > 0) {
+          e.preventDefault();
+          selectOption(0);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeList();
+      }
+    });
+  }
+
+  function setupFeeComboboxes() {
+    initCombobox({
+      inputEl: document.getElementById('fee-student-search-input'),
+      hiddenEl: document.getElementById('fee-student-id'),
+      listboxEl: document.getElementById('fee-student-listbox'),
+      errorEl: document.getElementById('fee-student-error'),
+      searchEndpoint: '/students/search',
+      emptyMessage: 'Nhập mã hoặc tên để tìm sinh viên.',
+      formatItem: (s) => `[${s.student_code}] ${s.full_name} (${s.class_name || 'Chưa phân lớp'})`,
+      formatValue: (s) => `[${s.student_code}] ${s.full_name}`,
+      onSelect: () => {
+        checkDuplicateFeeRecord();
+      }
+    });
+
+    initCombobox({
+      inputEl: document.getElementById('fee-semester-search-input'),
+      hiddenEl: document.getElementById('fee-semester-id'),
+      listboxEl: document.getElementById('fee-semester-listbox'),
+      errorEl: document.getElementById('fee-semester-error'),
+      searchEndpoint: '/semesters/search',
+      emptyMessage: 'Nhập học kỳ để tìm kiếm.',
+      formatItem: (sem) => sem.label,
+      formatValue: (sem) => sem.label,
+      onSelect: () => {
+        updateFeeGrossPreview();
+      }
+    });
   }
 
   async function handleFeeSubmit(e) {
@@ -1881,10 +2232,10 @@
     const creditsStr = form.registeredCredits.value;
 
     if (!studentId) {
-      fields.studentId = 'Vui lòng chọn sinh viên.';
+      fields.studentId = 'Vui lòng chọn sinh viên từ danh sách.';
     }
     if (!semesterId) {
-      fields.semester = 'Vui lòng chọn học kỳ.';
+      fields.semester = 'Vui lòng chọn học kỳ từ danh sách.';
     }
     const creditsNum = parseInt(creditsStr, 10);
     if (!creditsStr || isNaN(creditsNum) || creditsNum < 1 || creditsNum > 50) {
@@ -2943,8 +3294,131 @@
   }
 
   /* ==========================================================================
-     10. IN BIÊN LAI (RECEIPT PRINTING)
+     10. IN BIÊN LAI (RECEIPT PRINTING) & HÓA ĐƠN ĐIỆN TỬ SINH VIÊN (STUDENT BILLS)
      ========================================================================== */
+
+  async function openStudentBill(ledgerEntryId) {
+    if (!ledgerEntryId) return;
+    try {
+      const res = await Api.get(`/student/bills/${ledgerEntryId}`);
+      if (!res || !res.ok || !res.data) {
+        showToast('Không tìm thấy hóa đơn học phí.', 'error');
+        return;
+      }
+      const bill = res.data;
+      const snap = bill.snapshot || {};
+
+      setElementText('bv-bill-no', bill.bill_no || '-');
+      setElementText('bv-student-code', snap.student_code || '-');
+      setElementText('bv-full-name', snap.full_name || '-');
+      setElementText('bv-class-name', snap.class_name || snap.class || '-');
+      setElementText('bv-semester-label', snap.semester_label || '-');
+      setElementText('bv-credits', String(snap.registered_credits || 0));
+      setElementText('bv-gross', Calc.formatVND(snap.gross_tuition || 0));
+      
+      let exText = Calc.formatVND(snap.exemption_amount || 0);
+      if (snap.exemption_reason) exText += ' (' + snap.exemption_reason + ')';
+      setElementText('bv-exemption', exText);
+
+      setElementText('bv-net-due', Calc.formatVND(snap.net_due || 0));
+      setElementText('bv-paid-before', Calc.formatVND(snap.total_paid_before || 0));
+      setElementText('bv-this-amount', Calc.formatVND(snap.this_payment_amount || snap.amount || 0));
+      setElementText('bv-paid-after', Calc.formatVND(snap.total_paid_after || 0));
+      setElementText('bv-remaining', Calc.formatVND(snap.remaining_balance || 0));
+
+      let methodText = snap.method_label || snap.method || '-';
+      if (snap.gateway_brand && snap.gateway_last4) {
+        methodText += ` (${snap.gateway_brand} ****${snap.gateway_last4})`;
+      }
+      setElementText('bv-method', methodText);
+      setElementText('bv-receipt-no', snap.receipt_number || snap.receipt_no || '-');
+      setElementText('bv-timestamp', snap.payment_timestamp || '-');
+
+      const downloadBtn = document.getElementById('btn-download-bill-from-modal');
+      if (downloadBtn) {
+        downloadBtn.onclick = () => downloadStudentBill(ledgerEntryId);
+      }
+      const printBtn = document.getElementById('btn-print-bill-from-modal');
+      if (printBtn) {
+        printBtn.onclick = () => printStudentBill(ledgerEntryId, bill);
+      }
+
+      const modal = document.getElementById('modal-student-bill');
+      if (modal && typeof modal.showModal === 'function') {
+        modal.showModal();
+      }
+    } catch (err) {
+      showToast(err.message || 'Lỗi khi tải hóa đơn.', 'error');
+    }
+  }
+
+  function downloadStudentBill(ledgerEntryId) {
+    if (!ledgerEntryId) return;
+    const base = (typeof Api !== 'undefined' && Api.getBaseUrl) ? Api.getBaseUrl() : '/api';
+    window.location.href = `${base}/student/bills/${ledgerEntryId}/download`;
+  }
+
+  async function printStudentBill(ledgerEntryId, billData = null) {
+    let bill = billData;
+    if (!bill) {
+      try {
+        const res = await Api.get(`/student/bills/${ledgerEntryId}`);
+        if (res && res.ok && res.data) {
+          bill = res.data;
+        }
+      } catch (err) {
+        showToast('Lỗi khi tải dữ liệu in hóa đơn.', 'error');
+        return;
+      }
+    }
+    if (!bill) return;
+
+    const snap = bill.snapshot || {};
+    const printArea = document.getElementById('bill-print-area');
+    if (!printArea) return;
+
+    setElementText('pb-school-name', snap.school_name || '[Tên trường]');
+    setElementText('pb-bill-no', bill.bill_no || '-');
+    setElementText('pb-date', snap.payment_timestamp || '-');
+    setElementText('pb-student-name', snap.full_name || '-');
+    setElementText('pb-student-id', snap.student_code || '-');
+    setElementText('pb-student-class', snap.class_name || snap.class || '-');
+    setElementText('pb-semester', snap.semester_label || '-');
+    setElementText('pb-credits', String(snap.registered_credits || 0));
+
+    let methodText = snap.method_label || snap.method || '-';
+    let cardInfo = '-';
+    if (snap.gateway_brand && snap.gateway_last4) {
+      cardInfo = `${snap.gateway_brand} ****${snap.gateway_last4}`;
+    }
+    setElementText('pb-method', methodText);
+    setElementText('pb-card-info', cardInfo);
+    setElementText('pb-receipt-no', snap.receipt_number || snap.receipt_no || '-');
+
+    const amt = snap.this_payment_amount || snap.amount || 0;
+    setElementText('pb-amount-vnd', Calc.formatVND(amt));
+    setElementText('pb-amount-words', Calc.numberToWordsVND(amt));
+
+    setElementText('pb-gross', Calc.formatVND(snap.gross_tuition || 0));
+    let exText = Calc.formatVND(snap.exemption_amount || 0);
+    if (snap.exemption_reason) exText += ' (' + snap.exemption_reason + ')';
+    setElementText('pb-exemption', exText);
+
+    setElementText('pb-net-due', Calc.formatVND(snap.net_due || 0));
+    setElementText('pb-paid-before', Calc.formatVND(snap.total_paid_before || 0));
+    setElementText('pb-paid-after', Calc.formatVND(snap.total_paid_after || 0));
+    setElementText('pb-remaining-balance', Calc.formatVND(snap.remaining_balance || 0));
+
+    printArea.hidden = false;
+    window.print();
+  }
+
+  function closeBillView() {
+    const printArea = document.getElementById('bill-print-area');
+    if (printArea) {
+      printArea.hidden = true;
+    }
+  }
 
   async function openReceiptView(ledgerEntryId) {
     try {
@@ -3548,7 +4022,79 @@
     }
   }
 
-  // 3. Sinh viên: Thanh toán học phí
+  // 3. Sinh viên: Thanh toán học phí (Hỗ trợ Mô phỏng Mã QR & Thẻ Visa/Mastercard)
+  let activeQrSessionId = null;
+  let qrPollTimer = null;
+  let qrCountdownTimer = null;
+  let qrExpiresTimestamp = 0;
+
+  function closeStudentQrSession() {
+    if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+    if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
+    activeQrSessionId = null;
+    const qrModal = document.getElementById('student-qr-modal');
+    if (qrModal) qrModal.style.display = 'none';
+  }
+
+  function updateStudentPayMethodUi() {
+    const form = document.getElementById('student-payment-form');
+    if (!form) return;
+    const method = form.student_pay_method?.value || 'Mã QR';
+    const cardFields = document.getElementById('student-card-fields');
+    const submitBtn = document.getElementById('btn-student-submit-pay');
+    const qrModal = document.getElementById('student-qr-modal');
+
+    if (qrModal) qrModal.style.display = 'none';
+    closeStudentQrSession();
+
+    if (method === 'Thẻ Visa/Mastercard') {
+      if (cardFields) cardFields.style.display = 'block';
+      if (submitBtn) submitBtn.innerHTML = '💳 Xác nhận Thanh toán Thẻ';
+    } else {
+      if (cardFields) cardFields.style.display = 'none';
+      if (submitBtn) submitBtn.innerHTML = '📱 Tạo Mã QR Thanh toán';
+    }
+  }
+
+  function validateLuhn(numStr) {
+    const digits = (numStr || '').replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) return false;
+    let sum = 0;
+    let shouldDouble = false;
+    for (let i = digits.length - 1; i >= 0; i--) {
+      let digit = parseInt(digits.charAt(i), 10);
+      if (shouldDouble) {
+        digit *= 2;
+        if (digit > 9) digit -= 9;
+      }
+      sum += digit;
+      shouldDouble = !shouldDouble;
+    }
+    return sum % 10 === 0;
+  }
+
+  function validateCardExpiry(expiry) {
+    const match = (expiry || '').trim().match(/^(0[1-9]|1[0-2])\/(\d{2})$/);
+    if (!match) return false;
+    const month = parseInt(match[1], 10);
+    const year = 2000 + parseInt(match[2], 10);
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth() + 1;
+    if (year < curYear || (year === curYear && month < curMonth)) return false;
+    return true;
+  }
+
+  function validateCardholderName(name) {
+    const trimmed = (name || '').trim();
+    if (!trimmed || trimmed.length > 100) return false;
+    return /^[\p{L}\s]+$/u.test(trimmed);
+  }
+
+  function validateCardCvv(cvv) {
+    return /^\d{3,4}$/.test((cvv || '').trim());
+  }
+
   async function loadStudentPaymentOptions() {
     const select = document.getElementById('student-pay-fee-record');
     const amountInput = document.getElementById('student-pay-amount');
@@ -3558,8 +4104,13 @@
     const tbody = document.getElementById('student-payment-records-body');
     const submitBtn = document.getElementById('btn-student-submit-pay');
 
+    closeStudentQrSession();
     if (successBox) successBox.style.display = 'none';
-    if (form) { form.reset(); Api.clearFieldErrors(form); }
+    if (form) { 
+      form.reset(); 
+      Api.clearFieldErrors(form); 
+      updateStudentPayMethodUi();
+    }
 
     if (tbody) {
       tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Đang tải danh sách khoản học phí...</td></tr>';
@@ -3676,6 +4227,7 @@
     const btn = document.getElementById('btn-student-submit-pay');
     const errBanner = document.getElementById('student-pay-general-error');
     const successBox = document.getElementById('student-pay-success-box');
+    const qrModal = document.getElementById('student-qr-modal');
     if (errBanner) { errBanner.hidden = true; errBanner.textContent = ''; }
     if (successBox) successBox.style.display = 'none';
     Api.clearFieldErrors(form);
@@ -3693,6 +4245,26 @@
       fields.amount = 'Số tiền phải là số nguyên dương.';
     }
 
+    if (method === 'Thẻ Visa/Mastercard') {
+      const cardNum = (form.card_number?.value || '').replace(/[\s-]+/g, '');
+      const cardName = (form.cardholder_name?.value || '').trim();
+      const cardExp = (form.expiry?.value || '').trim();
+      const cardCvv = (form.cvv?.value || '').trim();
+
+      if (!cardNum || !/^\d{13,19}$/.test(cardNum) || !validateLuhn(cardNum)) {
+        fields.card_number = 'Số thẻ không hợp lệ (13-19 chữ số, chuẩn Luhn).';
+      }
+      if (!validateCardholderName(cardName)) {
+        fields.cardholder_name = 'Tên chủ thẻ không hợp lệ (chỉ gồm chữ cái và khoảng trắng, tối đa 100 ký tự).';
+      }
+      if (!validateCardExpiry(cardExp)) {
+        fields.expiry = 'Ngày hết hạn không hợp lệ hoặc đã qua (định dạng MM/YY).';
+      }
+      if (!validateCardCvv(cardCvv)) {
+        fields.cvv = 'Mã CVV phải gồm 3 hoặc 4 chữ số.';
+      }
+    }
+
     if (Object.keys(fields).length > 0) {
       Api.renderFieldErrors(form, fields);
       return;
@@ -3700,40 +4272,299 @@
 
     const requestId = Api.generateUUID();
 
+    if (method === 'Thẻ Visa/Mastercard') {
+      const rawCardNumber = (form.card_number?.value || '').replace(/[\s-]+/g, '');
+      const rawCardholder = (form.cardholder_name?.value || '').trim();
+      const rawExpiry = (form.expiry?.value || '').trim();
+      const rawCvv = (form.cvv?.value || '').trim();
+
+      // Xóa sạch thông tin thẻ trên DOM ngay trước và sau submit để bảo mật tuyệt đối
+      const clearCardDom = () => {
+        if (form.card_number) form.card_number.value = '';
+        if (form.cardholder_name) form.cardholder_name.value = '';
+        if (form.expiry) form.expiry.value = '';
+        if (form.cvv) form.cvv.value = '';
+      };
+
+      try {
+        const res = await Api.post(`/student/fee-records/${feeRecordId}/card-payments`, {
+          amount: amount,
+          card_number: rawCardNumber,
+          cardholder_name: rawCardholder,
+          expiry: rawExpiry,
+          cvv: rawCvv,
+          request_id: requestId
+        }, btn);
+
+        clearCardDom();
+
+        if (res && res.ok && res.data) {
+          showToast('Thanh toán thẻ thành công!');
+          if (successBox) {
+            document.getElementById('sp-gw-ref').textContent = res.data.gateway_ref || 'GW-N/A';
+            document.getElementById('sp-receipt-no').textContent = res.data.receipt_no || '';
+
+            const billNo = res.data.bill_no || '';
+            const billNoRow = document.getElementById('sp-bill-no-row');
+            const billNoEl = document.getElementById('sp-bill-no');
+            if (billNo && billNoEl) {
+              billNoEl.textContent = billNo;
+              if (billNoRow) billNoRow.style.display = 'block';
+            }
+
+            document.getElementById('sp-amount').textContent = Calc.formatVND(res.data.amount || amount);
+            successBox.style.display = 'block';
+
+            const ledgerEntryId = res.data.id;
+            const viewBillBtn = document.getElementById('btn-student-view-bill');
+            if (viewBillBtn) {
+              if (ledgerEntryId) {
+                viewBillBtn.style.display = 'inline-block';
+                viewBillBtn.onclick = () => openStudentBill(ledgerEntryId);
+              } else {
+                viewBillBtn.style.display = 'none';
+              }
+            }
+
+            const downloadBillBtn = document.getElementById('btn-student-download-bill');
+            if (downloadBillBtn) {
+              if (ledgerEntryId) {
+                downloadBillBtn.style.display = 'inline-block';
+                downloadBillBtn.onclick = () => downloadStudentBill(ledgerEntryId);
+              } else {
+                downloadBillBtn.style.display = 'none';
+              }
+            }
+
+            const printBillBtn = document.getElementById('btn-student-print-bill');
+            if (printBillBtn) {
+              if (ledgerEntryId) {
+                printBillBtn.style.display = 'inline-block';
+                printBillBtn.onclick = () => printStudentBill(ledgerEntryId);
+              } else {
+                printBillBtn.style.display = 'none';
+              }
+            }
+
+            const viewRcptBtn = document.getElementById('btn-student-view-receipt');
+            if (viewRcptBtn) {
+              viewRcptBtn.onclick = () => openReceiptView(res.data.receipt_no);
+            }
+          }
+          loadStudentPaymentOptions();
+        }
+      } catch (err) {
+        clearCardDom();
+        if (err.fields && Object.keys(err.fields).length > 0) {
+          Api.renderFieldErrors(form, err.fields);
+        } else {
+          showToast(err.message || 'Lỗi xử lý thanh toán thẻ.', 'error');
+        }
+        if (errBanner) {
+          errBanner.textContent = err.message || 'Lỗi xử lý thanh toán thẻ.';
+          errBanner.hidden = false;
+          errBanner.style.display = 'block';
+        }
+      }
+      return;
+    }
+
+    // Phương thức Mã QR (Mô phỏng)
     try {
-      const res = await Api.post(`/student/fee-records/${feeRecordId}/payments`, {
+      const res = await Api.post(`/student/fee-records/${feeRecordId}/payment-sessions`, {
         amount: amount,
-        method: method,
+        method: 'Mã QR',
         request_id: requestId
       }, btn);
 
       if (res && res.ok && res.data) {
-        showToast('Thanh toán học phí thành công!');
-        if (successBox) {
-          document.getElementById('sp-gw-ref').textContent = res.data.gateway_ref || 'GW-N/A';
-          document.getElementById('sp-receipt-no').textContent = res.data.receipt_no || '';
-          document.getElementById('sp-amount').textContent = Calc.formatVND(res.data.amount || amount);
-          successBox.style.display = 'block';
+        const sess = res.data;
+        activeQrSessionId = sess.session_id;
 
-          const viewRcptBtn = document.getElementById('btn-student-view-receipt');
-          if (viewRcptBtn) {
-            viewRcptBtn.onclick = () => openReceiptView(res.data.receipt_no);
+        if (qrModal) {
+          qrModal.style.display = 'block';
+          qrModal.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        const qrTarget = document.getElementById('student-qr-target');
+        if (qrTarget) {
+          qrTarget.innerHTML = '';
+          if (typeof QRCode !== 'undefined') {
+            new QRCode(qrTarget, {
+              text: sess.qr_data || JSON.stringify(sess),
+              width: 200,
+              height: 200
+            });
+          } else {
+            qrTarget.innerHTML = '<div style="padding: 2rem; background: #eee;">[Mã QR Thanh toán]</div>';
           }
         }
-        loadStudentPaymentOptions();
+
+        const amtText = document.getElementById('student-qr-amount-text');
+        if (amtText) amtText.textContent = Calc.formatVND(sess.amount);
+
+        const statusText = document.getElementById('student-qr-status-text');
+        if (statusText) statusText.textContent = 'Đang chờ xác nhận giao dịch từ ngân hàng (tự động kiểm tra mỗi 3 giây)...';
+
+        const simBtn = document.getElementById('btn-student-qr-simulate');
+        if (simBtn) {
+          simBtn.style.display = sess.simulation_enabled ? 'inline-block' : 'none';
+        }
+
+        startQrSessionMonitoring(sess);
       }
     } catch (err) {
       if (err.fields && Object.keys(err.fields).length > 0) {
         Api.renderFieldErrors(form, err.fields);
       } else {
-        showToast(err.message || 'Lỗi xử lý thanh toán.', 'error');
+        showToast(err.message || 'Lỗi tạo phiên thanh toán QR.', 'error');
       }
       if (errBanner) {
-        errBanner.textContent = err.message || 'Lỗi xử lý thanh toán.';
+        errBanner.textContent = err.message || 'Lỗi tạo phiên thanh toán QR.';
         errBanner.hidden = false;
         errBanner.style.display = 'block';
       }
     }
+  }
+
+  function startQrSessionMonitoring(sess) {
+    if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+    if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
+    activeQrSessionId = sess.session_id;
+
+    // Countdown timer
+    const countdownEl = document.getElementById('student-qr-countdown');
+    const expDate = new Date(sess.expires_at.replace(/-/g, '/'));
+    qrExpiresTimestamp = expDate.getTime();
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((qrExpiresTimestamp - now) / 1000));
+      const mins = Math.floor(diff / 60);
+      const secs = diff % 60;
+      if (countdownEl) {
+        countdownEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      }
+      if (diff <= 0) {
+        if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null; }
+        if (qrCountdownTimer) { clearInterval(qrCountdownTimer); qrCountdownTimer = null; }
+        const statusText = document.getElementById('student-qr-status-text');
+        if (statusText) {
+          statusText.innerHTML = '<span class="text-danger">Mã QR đã hết hạn. Vui lòng tạo mã mới.</span> <div style="margin-top:0.5rem;"><button type="button" class="btn btn-sm btn-primary" id="btn-qr-renew">Tạo mã mới</button></div>';
+          document.getElementById('btn-qr-renew')?.addEventListener('click', () => {
+            closeStudentQrSession();
+            handleStudentPaymentSubmit();
+          });
+        }
+      }
+    };
+    updateTimer();
+    qrCountdownTimer = setInterval(updateTimer, 1000);
+
+    // Poll session status every 3s
+    qrPollTimer = setInterval(async () => {
+      if (!activeQrSessionId) return;
+      try {
+        const pollRes = await Api.get(`/student/payment-sessions/${activeQrSessionId}`);
+        if (pollRes && pollRes.ok && pollRes.data) {
+          if (pollRes.data.status === 'confirmed') {
+            closeStudentQrSession();
+            handleQrPaymentConfirmed(pollRes.data);
+          } else if (pollRes.data.status === 'expired') {
+            closeStudentQrSession();
+            const statusText = document.getElementById('student-qr-status-text');
+            if (statusText) {
+              statusText.innerHTML = '<span class="text-danger">Mã QR đã hết hạn. Vui lòng tạo mã mới.</span> <div style="margin-top:0.5rem;"><button type="button" class="btn btn-sm btn-primary" id="btn-qr-renew">Tạo mã mới</button></div>';
+              document.getElementById('btn-qr-renew')?.addEventListener('click', () => {
+                closeStudentQrSession();
+                handleStudentPaymentSubmit();
+              });
+            }
+          } else if (pollRes.data.status === 'cancelled') {
+            closeStudentQrSession();
+            const statusText = document.getElementById('student-qr-status-text');
+            if (statusText) statusText.innerHTML = '<span class="text-warning">Phiên thanh toán đã bị hủy.</span>';
+          }
+        }
+      } catch (pe) {
+        if (pe && pe.status === 401) {
+          closeStudentQrSession();
+          onLoggedOut();
+          showToast('Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.', 'error');
+        } else if (pe && pe.status === 404) {
+          closeStudentQrSession();
+          const statusText = document.getElementById('student-qr-status-text');
+          if (statusText) statusText.innerHTML = '<span class="text-danger">Không tìm thấy phiên thanh toán.</span>';
+        } else {
+          console.warn('Lỗi kiểm tra phiên thanh toán:', pe);
+        }
+      }
+    }, 3000);
+  }
+
+  function handleQrPaymentConfirmed(sessData, ledgerEntry = null) {
+    const qrModal = document.getElementById('student-qr-modal');
+    if (qrModal) qrModal.style.display = 'none';
+
+    showToast('Thanh toán mã QR thành công!');
+    const successBox = document.getElementById('student-pay-success-box');
+    if (successBox) {
+      document.getElementById('sp-gw-ref').textContent = 'QR-SIM-' + sessData.session_id;
+      const receiptNo = ledgerEntry?.receipt_no || sessData.receipt_no || 'Đã lập biên lai thành công';
+      document.getElementById('sp-receipt-no').textContent = receiptNo;
+
+      const billNo = ledgerEntry?.bill_no || sessData.bill_no || '';
+      const billNoRow = document.getElementById('sp-bill-no-row');
+      const billNoEl = document.getElementById('sp-bill-no');
+      if (billNo && billNoEl) {
+        billNoEl.textContent = billNo;
+        if (billNoRow) billNoRow.style.display = 'block';
+      }
+
+      document.getElementById('sp-amount').textContent = Calc.formatVND(sessData.amount || ledgerEntry?.amount);
+      successBox.style.display = 'block';
+
+      const ledgerEntryId = ledgerEntry?.id;
+      const viewBillBtn = document.getElementById('btn-student-view-bill');
+      if (viewBillBtn) {
+        if (ledgerEntryId) {
+          viewBillBtn.style.display = 'inline-block';
+          viewBillBtn.onclick = () => openStudentBill(ledgerEntryId);
+        } else {
+          viewBillBtn.style.display = 'none';
+        }
+      }
+
+      const downloadBillBtn = document.getElementById('btn-student-download-bill');
+      if (downloadBillBtn) {
+        if (ledgerEntryId) {
+          downloadBillBtn.style.display = 'inline-block';
+          downloadBillBtn.onclick = () => downloadStudentBill(ledgerEntryId);
+        } else {
+          downloadBillBtn.style.display = 'none';
+        }
+      }
+
+      const printBillBtn = document.getElementById('btn-student-print-bill');
+      if (printBillBtn) {
+        if (ledgerEntryId) {
+          printBillBtn.style.display = 'inline-block';
+          printBillBtn.onclick = () => printStudentBill(ledgerEntryId);
+        } else {
+          printBillBtn.style.display = 'none';
+        }
+      }
+
+      const viewRcptBtn = document.getElementById('btn-student-view-receipt');
+      if (viewRcptBtn) {
+        if (ledgerEntry?.receipt_no) {
+          viewRcptBtn.onclick = () => openReceiptView(ledgerEntry.receipt_no);
+        } else {
+          viewRcptBtn.onclick = () => switchTab('student-history');
+        }
+      }
+    }
+    loadStudentPaymentOptions();
   }
 
   // 4. Sinh viên: Lịch sử thanh toán
@@ -3809,12 +4640,18 @@
             <td>${escapeHTML(e.method || '-')}</td>
             <td class="text-center"><span class="badge badge-info">${escapeHTML(e.type_label || e.entry_type)}</span></td>
             <td class="text-right">${Calc.formatVND(e.running_balance)}</td>
-            <td class="text-center">
+            <td class="text-center" style="white-space: nowrap;">
               ${isPayment && e.receipt_no ? `
-                <button type="button" class="btn btn-sm btn-outline-primary btn-print-receipt" data-receipt-no="${e.receipt_no}">
-                  🖨️ In biên lai
+                <button type="button" class="btn btn-sm btn-outline-primary btn-print-receipt" data-receipt-no="${e.receipt_no}" title="Xem &amp; In biên lai">
+                  🖨️ Biên lai
                 </button>
-              ` : '-'}
+              ` : ''}
+              ${isPayment && (e.has_bill || e.method === 'Mã QR' || e.method === 'Thẻ Visa/Mastercard') ? `
+                <button type="button" class="btn btn-sm btn-outline-success btn-view-bill" data-ledger-id="${e.id}" style="margin-left: 0.25rem;" title="Xem hóa đơn điện tử">
+                  📄 Hóa đơn
+                </button>
+              ` : ''}
+              ${!isPayment || (!e.receipt_no && !e.has_bill && e.method !== 'Mã QR' && e.method !== 'Thẻ Visa/Mastercard') ? '-' : ''}
             </td>
           </tr>
         `;
@@ -3823,6 +4660,12 @@
       tbody.querySelectorAll('.btn-print-receipt').forEach(btn => {
         btn.addEventListener('click', () => {
           openReceiptView(btn.dataset.receiptNo);
+        });
+      });
+
+      tbody.querySelectorAll('.btn-view-bill').forEach(btn => {
+        btn.addEventListener('click', () => {
+          openStudentBill(btn.dataset.ledgerId);
         });
       });
     } catch (err) {
@@ -3901,8 +4744,7 @@
     document.getElementById('btn-close-fee-modal')?.addEventListener('click', () => document.getElementById('modal-fee').close());
     document.getElementById('btn-cancel-fee')?.addEventListener('click', () => document.getElementById('modal-fee').close());
     document.getElementById('fee-form')?.addEventListener('submit', handleFeeSubmit);
-    document.getElementById('fee-student-select')?.addEventListener('change', checkDuplicateFeeRecord);
-    document.getElementById('fee-semester-select')?.addEventListener('change', updateFeeGrossPreview);
+    setupFeeComboboxes();
     document.getElementById('fee-credits-input')?.addEventListener('input', updateFeeGrossPreview);
     document.getElementById('fee-filter-semester')?.addEventListener('change', loadFeesData);
     document.getElementById('fee-filter-status')?.addEventListener('change', loadFeesData);
@@ -4219,6 +5061,93 @@
     document.getElementById('btn-change-pw-logout')?.addEventListener('click', handleLogout);
     document.getElementById('student-password-form')?.addEventListener('submit', handleStudentPasswordSubmit);
     document.getElementById('student-payment-form')?.addEventListener('submit', handleStudentPaymentSubmit);
+
+    // Tùy chọn phương thức thanh toán sinh viên (Mã QR / Thẻ Visa/Mastercard)
+    document.querySelectorAll('input[name="student_pay_method"]').forEach(r => {
+      r.addEventListener('change', updateStudentPayMethodUi);
+    });
+
+    // Định dạng số thẻ tự động (dấu cách sau mỗi 4 số)
+    const cardNumInput = document.getElementById('student-card-number');
+    if (cardNumInput) {
+      cardNumInput.addEventListener('input', (e) => {
+        let val = e.target.value.replace(/\D/g, '').substring(0, 19);
+        e.target.value = val.replace(/(.{4})/g, '$1 ').trim();
+      });
+    }
+
+    // Định dạng ngày hết hạn thẻ (MM/YY)
+    const expiryInput = document.getElementById('student-card-expiry');
+    if (expiryInput) {
+      expiryInput.addEventListener('input', (e) => {
+        let val = e.target.value.replace(/\D/g, '').substring(0, 4);
+        if (val.length >= 2) {
+          e.target.value = val.substring(0, 2) + '/' + val.substring(2);
+        } else {
+          e.target.value = val;
+        }
+      });
+    }
+
+    // Định dạng CVV
+    const cvvInput = document.getElementById('student-card-cvv');
+    if (cvvInput) {
+      cvvInput.addEventListener('input', (e) => {
+        e.target.value = e.target.value.replace(/\D/g, '').substring(0, 4);
+      });
+    }
+
+    // Các nút thao tác phiên QR
+    document.getElementById('btn-student-qr-check')?.addEventListener('click', async () => {
+      if (!activeQrSessionId) return;
+      try {
+        const res = await Api.get(`/student/payment-sessions/${activeQrSessionId}`);
+        if (res && res.ok && res.data) {
+          if (res.data.status === 'confirmed') {
+            closeStudentQrSession();
+            handleQrPaymentConfirmed(res.data);
+          } else if (res.data.status === 'pending') {
+            showToast('Hệ thống đang chờ ngân hàng xác nhận giao dịch...', 'info');
+          } else if (res.data.status === 'expired') {
+            closeStudentQrSession();
+            showToast('Mã QR đã hết hạn. Vui lòng tạo mã mới.', 'error');
+          } else if (res.data.status === 'cancelled') {
+            closeStudentQrSession();
+            showToast('Phiên thanh toán đã bị hủy.', 'warning');
+          }
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi kiểm tra trạng thái.', 'error');
+      }
+    });
+
+    document.getElementById('btn-student-qr-cancel')?.addEventListener('click', async () => {
+      if (!activeQrSessionId) {
+        closeStudentQrSession();
+        return;
+      }
+      try {
+        await Api.post(`/student/payment-sessions/${activeQrSessionId}/cancel`);
+        closeStudentQrSession();
+        showToast('Đã hủy phiên thanh toán.');
+      } catch (err) {
+        showToast(err.message || 'Lỗi hủy phiên thanh toán.', 'error');
+      }
+    });
+
+    document.getElementById('btn-student-qr-simulate')?.addEventListener('click', async () => {
+      if (!activeQrSessionId) return;
+      const btn = document.getElementById('btn-student-qr-simulate');
+      try {
+        const res = await Api.post(`/student/payment-sessions/${activeQrSessionId}/simulate-confirm`, {}, btn);
+        if (res && res.ok && res.data) {
+          closeStudentQrSession();
+          handleQrPaymentConfirmed(res.data.session || { session_id: activeQrSessionId, amount: res.data.ledger_entry?.amount }, res.data.ledger_entry);
+        }
+      } catch (err) {
+        showToast(err.message || 'Lỗi mô phỏng thanh toán.', 'error');
+      }
+    });
     document.getElementById('btn-student-pay-another')?.addEventListener('click', () => {
       const successBox = document.getElementById('student-pay-success-box');
       if (successBox) successBox.style.display = 'none';
@@ -4240,6 +5169,13 @@
     document.getElementById('btn-sa-reset')?.addEventListener('click', handleStudentAccountReset);
     document.getElementById('btn-sa-copy-pw')?.addEventListener('click', copyStudentPasswordToClipboard);
 
+    // Sự kiện Modal Hóa đơn Sinh viên & In hóa đơn
+    document.getElementById('btn-close-student-bill-modal')?.addEventListener('click', () => document.getElementById('modal-student-bill')?.close());
+    document.getElementById('btn-close-bill-modal-footer')?.addEventListener('click', () => document.getElementById('modal-student-bill')?.close());
+    document.getElementById('btn-close-bill-top')?.addEventListener('click', closeBillView);
+    document.getElementById('btn-close-bill-view')?.addEventListener('click', closeBillView);
+    document.getElementById('btn-trigger-print-bill')?.addEventListener('click', () => window.print());
+
     // Chống quay lại trình duyệt (Back Button / Popstate / Pageshow Protection)
     window.addEventListener('popstate', () => {
       checkAuthSession();
@@ -4258,6 +5194,7 @@
 
   // Khởi động ứng dụng
   function bootstrap() {
+    incrementTabCount();
     if (window.location.search && window.history && window.history.replaceState) {
       const search = window.location.search;
       if (search.includes('username=') || search.includes('password=')) {

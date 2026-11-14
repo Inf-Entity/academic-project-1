@@ -28,5 +28,7 @@ return [
     ],
     'app' => [
         'school_name' => '[Tên trường]',
-    ]
+    ],
+    // Cấu hình mô phỏng thanh toán (Simulated Payment: Mã QR & Thẻ Visa/Mastercard)
+    'simulation_enabled' => true,
 ];

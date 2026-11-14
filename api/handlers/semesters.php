@@ -16,6 +16,71 @@ function handle_semesters_routes(string $method, string $path, array $matches): 
     require_admin();
     $db = get_db_connection();
 
+    // 1b. GET /api/semesters/search (Combobox Search for fee record creation)
+    if ($path === '/api/semesters/search' && $method === 'GET') {
+        $rawQ = isset($_GET['q']) ? (string)$_GET['q'] : '';
+        $trimmed = trim($rawQ);
+        if (mb_strlen($trimmed, 'UTF-8') > 100) {
+            json_error('Từ khóa tìm kiếm không được vượt quá 100 ký tự.', 'VALIDATION_ERROR', 400, [
+                'q' => 'Từ khóa tìm kiếm không được vượt quá 100 ký tự.'
+            ]);
+        }
+
+        if ($trimmed === '') {
+            send_security_headers();
+            http_response_code(200);
+            echo json_encode([
+                'ok'      => true,
+                'data'    => [],
+                'message' => 'Nhập học kỳ để tìm kiếm.'
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            exit;
+        }
+
+        $normQ = normalize_vietnamese($trimmed);
+
+        $stmt = $db->query(
+            "SELECT id, term_no, academic_year_start, created_at,
+                    CONCAT('Học kỳ ', term_no, ' - Năm học ', academic_year_start, '-', academic_year_start + 1) AS label
+             FROM semesters
+             ORDER BY academic_year_start DESC, term_no DESC"
+        );
+        $all = $stmt->fetchAll();
+        $matches = [];
+
+        foreach ($all as $sem) {
+            $id = (int)$sem['id'];
+            $termNo = (int)$sem['term_no'];
+            $yearStart = (int)$sem['academic_year_start'];
+            $yearEnd = $yearStart + 1;
+            $label = (string)$sem['label'];
+            $normLabel = normalize_vietnamese($label);
+
+            $matched = false;
+            if (str_contains($normLabel, $normQ)) {
+                $matched = true;
+            } elseif (preg_match('/^hk\s*(\d+)$/i', $normQ, $termMatch) && (int)$termMatch[1] === $termNo) {
+                $matched = true;
+            } elseif ($normQ === (string)$yearStart || $normQ === (string)$yearEnd) {
+                $matched = true;
+            } elseif (preg_match('/^hk\s*(\d+)\s+(\d{4})/i', $normQ, $comboMatch) && (int)$comboMatch[1] === $termNo && (int)$comboMatch[2] === $yearStart) {
+                $matched = true;
+            }
+
+            if ($matched) {
+                $matches[] = [
+                    'id'                  => $id,
+                    'term_no'             => $termNo,
+                    'academic_year_start' => $yearStart,
+                    'label'               => $label
+                ];
+            }
+        }
+
+        $sliced = array_slice($matches, 0, 20);
+        json_success($sliced, 200);
+    }
+
     // 1. GET /api/semesters
     if ($path === '/api/semesters' && $method === 'GET') {
         $stmt = $db->query(

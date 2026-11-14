@@ -96,6 +96,17 @@ class ApiTestClient {
         return $this->cookieFile;
     }
 
+    public function getSessionId(): ?string {
+        if (!file_exists($this->cookieFile)) {
+            return null;
+        }
+        $content = file_get_contents($this->cookieFile);
+        if (preg_match('/TUITION_SESSID\s+([a-zA-Z0-9,-]+)/', $content, $m)) {
+            return $m[1];
+        }
+        return null;
+    }
+
     public function request(string $method, string $path, $body = null, array $headers = []): array {
         $url = $this->baseUrl . (str_starts_with($path, '/') ? $path : '/' . $path);
         $ch = curl_init($url);
@@ -126,6 +137,16 @@ class ApiTestClient {
         curl_setopt($ch, CURLOPT_COOKIEFILE, $this->cookieFile);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 
+        $respHeaders = [];
+        curl_setopt($ch, CURLOPT_HEADERFUNCTION, function($ch, $header) use (&$respHeaders) {
+            $len = strlen($header);
+            $parts = explode(':', $header, 2);
+            if (count($parts) === 2) {
+                $respHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+            }
+            return $len;
+        });
+
         $rawResponse = curl_exec($ch);
         $statusCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_error($ch);
@@ -141,9 +162,10 @@ class ApiTestClient {
         }
 
         return [
-            'status' => $statusCode,
-            'body'   => $json,
-            'raw'    => $rawResponse
+            'status'  => $statusCode,
+            'body'    => $json,
+            'raw'     => $rawResponse,
+            'headers' => $respHeaders
         ];
     }
 
@@ -204,10 +226,11 @@ $frCount = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
 $exCount = (int)$pdo->query("SELECT COUNT(*) FROM exemptions")->fetchColumn();
 $leCount = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
 $rfCount = (int)$pdo->query("SELECT COUNT(*) FROM refund_requests")->fetchColumn();
-it("Seed data nạp đủ số dòng chuẩn: 13 sinh viên, 13 hồ sơ học phí, 8 miễn giảm, 13 giao dịch sổ cái, 4 yêu cầu hoàn tiền", 
-    $stCount === 13 && $frCount === 13 && $exCount === 8 && $leCount === 13 && $rfCount === 4,
-    ['students' => 13, 'fee_records' => 13, 'exemptions' => 8, 'ledger_entries' => 13, 'refund_requests' => 4],
-    ['students' => $stCount, 'fee_records' => $frCount, 'exemptions' => $exCount, 'ledger_entries' => $leCount, 'refund_requests' => $rfCount]
+$billCount = (int)$pdo->query("SELECT COUNT(*) FROM bills")->fetchColumn();
+it("Seed data nạp đủ số dòng chuẩn: 24 sinh viên, 22 hồ sơ học phí, 10 miễn giảm, 26 giao dịch sổ cái, 5 yêu cầu hoàn tiền, 7 hóa đơn", 
+    $stCount === 24 && $frCount === 22 && $exCount === 10 && $leCount === 26 && $rfCount === 5 && $billCount === 7,
+    ['students' => 24, 'fee_records' => 22, 'exemptions' => 10, 'ledger_entries' => 26, 'refund_requests' => 5, 'bills' => 7],
+    ['students' => $stCount, 'fee_records' => $frCount, 'exemptions' => $exCount, 'ledger_entries' => $leCount, 'refund_requests' => $rfCount, 'bills' => $billCount]
 );
 
 $api = new ApiTestClient();
@@ -1646,7 +1669,7 @@ it("API tìm kiếm từ chối từ khóa dài hơn 100 ký tự với HTTP 400
 
 $diacriticsOnlySearchRes = $api->request('GET', "/students?q=" . urlencode("   ̀ ́ ̃ ̉ ̣   "));
 it("API tìm kiếm xử lý từ khóa chỉ chứa dấu thanh hoặc khoảng trắng tương đương rỗng, trả về danh sách đầy đủ", 
-    $diacriticsOnlySearchRes['status'] === 200 && count($diacriticsOnlySearchRes['body']['data'] ?? []) === 13
+    $diacriticsOnlySearchRes['status'] === 200 && count($diacriticsOnlySearchRes['body']['data'] ?? []) === 24
 );
 
 $longFeeSearchRes = $api->request('GET', "/fee-records?student=" . str_repeat('a', 101));
@@ -2669,6 +2692,7 @@ it("Đăng nhập tài khoản sinh viên sai 5 lần liên tiếp kích hoạt 
 // Dọn dẹp dữ liệu kiểm thử
 $pdo->prepare("DELETE FROM audit_log WHERE user_id IN (SELECT id FROM users WHERE username = 'sv004')")->execute();
 $pdo->prepare("DELETE FROM users WHERE username = 'sv004'")->execute();
+$pdo->prepare("DELETE FROM bills WHERE ledger_entry_id IN (SELECT id FROM ledger_entries WHERE fee_record_id = :id)")->execute(['id' => $sv011NewFrId]);
 $pdo->prepare("DELETE FROM ledger_entries WHERE fee_record_id = :id")->execute(['id' => $sv011NewFrId]);
 $pdo->prepare("DELETE FROM fee_records WHERE id = :id")->execute(['id' => $sv011NewFrId]);
 
@@ -2834,24 +2858,24 @@ $allSummary = $stListAllRes['body']['meta']['summary'] ?? [];
 $filterSummary = $stListFilterRes['body']['meta']['summary'] ?? [];
 $zeroSummary = $stListZeroRes['body']['meta']['summary'] ?? [];
 
-it("Danh sách sinh viên trả về total_students_count = 13 không đổi khi lọc tìm kiếm", 
+it("Danh sách sinh viên trả về total_students_count = 24 không đổi khi lọc tìm kiếm", 
     count($allStudents) === $sqlTotalStudents
-    && count($filteredStudents) === 2
+    && count($filteredStudents) === 5
     && count($zeroStudents) === 0
     && (int)($allStudents[0]['total_students_count'] ?? 0) === $sqlTotalStudents
     && (int)($filteredStudents[0]['total_students_count'] ?? 0) === $sqlTotalStudents
 );
 
 it("Server trả về thống kê toàn trường (KPI summary) chuẩn xác kể cả khi danh sách bị lọc hoặc rỗng", 
-    (int)($allSummary['total_students_count'] ?? 0) === 13
-    && (int)($allSummary['with_records_count'] ?? 0) === 7
-    && (int)($allSummary['fully_paid_count'] ?? 0) === 3
-    && (int)($allSummary['outstanding_count'] ?? 0) === 4
+    (int)($allSummary['total_students_count'] ?? 0) === 24
+    && (int)($allSummary['with_records_count'] ?? 0) === 16
+    && (int)($allSummary['fully_paid_count'] ?? 0) === 11
+    && (int)($allSummary['outstanding_count'] ?? 0) === 5
     && (int)($allSummary['overpaid_count'] ?? 0) === 2
-    && (int)($filterSummary['with_records_count'] ?? 0) === 7
-    && (int)($filterSummary['fully_paid_count'] ?? 0) === 3
-    && (int)($zeroSummary['total_students_count'] ?? 0) === 13
-    && (int)($zeroSummary['with_records_count'] ?? 0) === 7
+    && (int)($filterSummary['with_records_count'] ?? 0) === 16
+    && (int)($filterSummary['fully_paid_count'] ?? 0) === 11
+    && (int)($zeroSummary['total_students_count'] ?? 0) === 24
+    && (int)($zeroSummary['with_records_count'] ?? 0) === 16
 );
 
 // 7. Issue 3: Số liệu tài chính từng sinh viên khớp đúng SQL (bao gồm SV miễn 100% là Fully Paid)
@@ -3506,6 +3530,983 @@ it("Khoản nộp thừa (overpaid excess) được loại trừ khỏi tiền c
     && (int)$sem2Overpaid['count'] === 2
     && (int)($sem2StatusAmts['overpaid']['outstanding'] ?? -1) === 0
     && (int)$sem2AmtData['outstanding'] === 11480000
+);
+
+// ----------------------------------------------------------------------------
+// 28. LUỒNG THANH TOÁN MÃ QR & THẺ VISA/MASTERCARD MÔ PHỎNG (SUITE 28)
+// ----------------------------------------------------------------------------
+suite_header("28. Kiểm thử Mở rộng Luồng Thanh toán Sinh viên (Mã QR & Thẻ Visa/Mastercard Mô phỏng)");
+
+// Thiết lập học kỳ và hồ sơ học phí riêng biệt phục vụ Suite 28
+$pdo->prepare("INSERT INTO semesters (term_no, academic_year_start, registration_open) VALUES (3, 2027, 1) ON DUPLICATE KEY UPDATE registration_open = 1")->execute();
+$s28SemId = (int)$pdo->query("SELECT id FROM semesters WHERE term_no = 3 AND academic_year_start = 2027")->fetchColumn();
+$pdo->prepare("INSERT INTO credit_rates (semester_id, price_per_credit) VALUES (:sid, 900000) ON DUPLICATE KEY UPDATE price_per_credit = 900000")->execute(['sid' => $s28SemId]);
+
+// Hồ sơ học phí cho SV002 (student_id = 2): 10 tín chỉ x 900.000 = 9.000.000 VND
+$pdo->prepare("INSERT INTO fee_records (student_id, semester_id, registered_credits, rate_snapshot, gross_tuition) VALUES (2, :sid, 10, 900000, 9000000) ON DUPLICATE KEY UPDATE registered_credits = 10, gross_tuition = 9000000")->execute(['sid' => $s28SemId]);
+$s28FrId = (int)$pdo->query("SELECT id FROM fee_records WHERE student_id = 2 AND semester_id = {$s28SemId}")->fetchColumn();
+
+// Đăng nhập Sinh viên SV002 (Student A) và SV001 (Student B)
+$clientA = new ApiTestClient();
+$loginARes = $clientA->login('sv002', 'Student@002');
+$clientB = new ApiTestClient();
+$loginBRes = $clientB->login('sv001', 'Student@001');
+
+it("Đăng nhập sinh viên sv002 và sv001 qua API thành công", 
+    $loginARes['status'] === 200 && $loginBRes['status'] === 200
+);
+
+// 1. Tạo phiên thanh toán Mã QR hợp lệ
+$reqId1 = 'e1111111-2222-3333-4444-000000000001';
+$qrSessRes1 = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 3000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqId1
+]);
+$s1Data = $qrSessRes1['body']['data'] ?? [];
+$s1Id = (int)($s1Data['session_id'] ?? 0);
+$payload1 = (string)($s1Data['payload'] ?? '');
+$parsedPayload = [];
+if (str_starts_with($payload1, 'TUITION|')) {
+    foreach (explode('|', substr($payload1, 8)) as $kv) {
+        $p = explode('=', $kv, 2);
+        if (count($p) === 2) $parsedPayload[$p[0]] = $p[1];
+    }
+}
+$is5MinExpiry = !empty($s1Data['expires_at']) && abs(strtotime($s1Data['expires_at']) - (time() + 300)) <= 15;
+
+it("Khởi tạo phiên thanh toán Mã QR hợp lệ trả về HTTP 201 với status='pending', expires_at 5 phút, payload chuẩn TUITION|... và simulation_enabled=true",
+    $qrSessRes1['status'] === 201
+    && $s1Id > 0
+    && ($s1Data['status'] ?? '') === 'pending'
+    && ($s1Data['amount'] ?? 0) === 3000000
+    && ($s1Data['method'] ?? '') === 'Mã QR'
+    && !empty($s1Data['payload'])
+    && !empty($s1Data['qr_data'])
+    && $is5MinExpiry
+    && ($parsedPayload['SESSION'] ?? '') === (string)$s1Id
+    && ($parsedPayload['FEE'] ?? '') === (string)$s28FrId
+    && ($parsedPayload['AMT'] ?? '') === '3000000'
+    && !empty($parsedPayload['EXP'])
+    && ($s1Data['simulation_enabled'] ?? false) === true
+);
+
+// 1b. Tạo phiên mới cho cùng hồ sơ học phí hủy phiên pending cũ
+$reqIdSecond = 'e1111111-2222-3333-4444-00000000001b';
+$qrSessResSecond = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 1000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdSecond
+]);
+$sSecondId = (int)($qrSessResSecond['body']['data']['session_id'] ?? 0);
+$s1StatusAfterSecond = $pdo->query("SELECT status FROM payment_sessions WHERE id = {$s1Id}")->fetchColumn();
+it("Khởi tạo phiên thanh toán mới cho cùng hồ sơ học phí tự động hủy phiên pending trước đó",
+    $qrSessResSecond['status'] === 201
+    && $sSecondId > 0
+    && $sSecondId !== $s1Id
+    && $s1StatusAfterSecond === 'cancelled'
+);
+
+// 2. Từ chối số tiền vượt quá công nợ còn lại
+$qrOverRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 9000001,
+    'method'     => 'Mã QR',
+    'request_id' => 'e1111111-2222-3333-4444-000000000002'
+]);
+it("Khởi tạo phiên QR với số tiền vượt quá công nợ còn lại bị từ chối với HTTP 422 OVERPAYMENT_REJECTED",
+    $qrOverRes['status'] === 422
+    && ($qrOverRes['body']['error']['code'] ?? '') === 'OVERPAYMENT_REJECTED'
+);
+
+// 3. Từ chối phương thức khác 'Mã QR'
+$qrBadMethodRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 1000000,
+    'method'     => 'Chuyển khoản',
+    'request_id' => 'e1111111-2222-3333-4444-000000000003'
+]);
+it("Khởi tạo phiên thanh toán với phương thức khác 'Mã QR' bị từ chối với HTTP 400",
+    $qrBadMethodRes['status'] === 400
+    && !empty($qrBadMethodRes['body']['error']['fields']['method'])
+);
+
+// 4. Sinh viên B không thể tạo phiên cho hồ sơ của Sinh viên A
+$qrCrossRes = $clientB->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 1000000,
+    'method'     => 'Mã QR',
+    'request_id' => 'e1111111-2222-3333-4444-000000000004'
+]);
+it("Sinh viên B không thể tạo phiên thanh toán cho hồ sơ của Sinh viên A (HTTP 404 cô lập)",
+    $qrCrossRes['status'] === 404
+);
+
+// 5. Gửi lại cùng request_id trả về phiên cũ (Idempotency)
+$qrDupRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 3000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqId1
+]);
+it("Gửi lại cùng request_id tạo phiên QR trả về HTTP 200 và cùng session_id cũ (Idempotency)",
+    $qrDupRes['status'] === 200
+    && (int)($qrDupRes['body']['data']['session_id'] ?? 0) === $s1Id
+);
+
+// 6. Tra cứu phiên thanh toán của chính mình
+$qrGetRes = $clientA->request('GET', "/student/payment-sessions/{$sSecondId}");
+it("Tra cứu phiên thanh toán QR của chính mình thành công với HTTP 200 và remaining_seconds > 0",
+    $qrGetRes['status'] === 200
+    && ($qrGetRes['body']['data']['status'] ?? '') === 'pending'
+    && ($qrGetRes['body']['data']['remaining_seconds'] ?? 0) > 0
+    && ($qrGetRes['body']['data']['simulation_enabled'] ?? false) === true
+);
+
+// 7. Sinh viên B tra cứu phiên QR của Sinh viên A trả về HTTP 404
+$qrCrossGetRes = $clientB->request('GET', "/student/payment-sessions/{$sSecondId}");
+it("Sinh viên B tra cứu phiên QR của Sinh viên A trả về HTTP 404",
+    $qrCrossGetRes['status'] === 404
+);
+
+// 8. Phiên hết hạn tự động chuyển trạng thái 'expired'
+$pdo->prepare("UPDATE payment_sessions SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = :id")->execute(['id' => $sSecondId]);
+$qrExpGetRes = $clientA->request('GET', "/student/payment-sessions/{$sSecondId}");
+it("Phiên thanh toán quá hạn (expires_at <= NOW) tự động cập nhật trạng thái 'expired'",
+    $qrExpGetRes['status'] === 200
+    && ($qrExpGetRes['body']['data']['status'] ?? '') === 'expired'
+    && ($qrExpGetRes['body']['data']['remaining_seconds'] ?? -1) === 0
+);
+
+// 9. Hủy phiên thanh toán (POST .../cancel)
+$reqIdCancel = 'e1111111-2222-3333-4444-000000000005';
+$qrSessResCancel = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 1000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdCancel
+]);
+$sCancelId = (int)($qrSessResCancel['body']['data']['session_id'] ?? 0);
+$cancelRes = $clientA->request('POST', "/student/payment-sessions/{$sCancelId}/cancel");
+$checkCancelled = $pdo->query("SELECT status FROM payment_sessions WHERE id = {$sCancelId}")->fetchColumn();
+it("Hủy phiên thanh toán đang chờ (pending) thành công với HTTP 200 và chuyển status thành 'cancelled'",
+    $cancelRes['status'] === 200
+    && $checkCancelled === 'cancelled'
+);
+
+// 10. Mô phỏng xác nhận thanh toán QR thành công (POST .../simulate-confirm)
+$reqIdSim = 'e1111111-2222-3333-4444-000000000006';
+$qrSessSimRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 2000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdSim
+]);
+$sSimId = (int)($qrSessSimRes['body']['data']['session_id'] ?? 0);
+$leBeforeSim = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE fee_record_id = {$s28FrId}")->fetchColumn();
+
+$simConfirmRes = $clientA->request('POST', "/student/payment-sessions/{$sSimId}/simulate-confirm");
+$simEntry = $simConfirmRes['body']['data']['ledger_entry'] ?? [];
+$leAfterSim = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE fee_record_id = {$s28FrId}")->fetchColumn();
+$sessStatusAfter = $pdo->query("SELECT status FROM payment_sessions WHERE id = {$sSimId}")->fetchColumn();
+
+it("Mô phỏng xác nhận thanh toán QR thành công (HTTP 200), ghi sổ cái phương thức 'Mã QR', sinh biên lai PT-*, và đổi status='confirmed'",
+    $simConfirmRes['status'] === 200
+    && $leAfterSim === $leBeforeSim + 1
+    && $sessStatusAfter === 'confirmed'
+    && ($simEntry['method'] ?? '') === 'Mã QR'
+    && str_starts_with($simEntry['receipt_no'] ?? '', 'PT-')
+    && (int)($simEntry['amount'] ?? 0) === 2000000
+);
+
+// 11. Gọi lại simulate-confirm cho phiên đã confirmed trả về HTTP 409
+$simDupRes = $clientA->request('POST', "/student/payment-sessions/{$sSimId}/simulate-confirm");
+$leCountDup = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE fee_record_id = {$s28FrId}")->fetchColumn();
+it("Gọi lại simulate-confirm cho phiên đã confirmed trả về HTTP 409 ALREADY_CONFIRMED",
+    $simDupRes['status'] === 409
+    && ($simDupRes['body']['error']['code'] ?? '') === 'ALREADY_CONFIRMED'
+    && $leCountDup === $leAfterSim
+);
+
+// 11b. Gọi simulate-confirm cho phiên đã hết hạn trả về HTTP 422 và không ghi sổ cái
+$reqIdExp = 'e1111111-2222-3333-4444-00000000001e';
+$qrExpSess = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 1000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdExp
+]);
+$sExpId = (int)($qrExpSess['body']['data']['session_id'] ?? 0);
+$pdo->prepare("UPDATE payment_sessions SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = :id")->execute(['id' => $sExpId]);
+$leBeforeExpConfirm = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE fee_record_id = {$s28FrId}")->fetchColumn();
+$confirmExpRes = $clientA->request('POST', "/student/payment-sessions/{$sExpId}/simulate-confirm");
+$leAfterExpConfirm = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries WHERE fee_record_id = {$s28FrId}")->fetchColumn();
+it("Gọi simulate-confirm cho phiên đã quá hạn trả về HTTP 422 SESSION_EXPIRED và không ghi sổ cái",
+    $confirmExpRes['status'] === 422
+    && ($confirmExpRes['body']['error']['code'] ?? '') === 'SESSION_EXPIRED'
+    && $leAfterExpConfirm === $leBeforeExpConfirm
+);
+
+// 12. Không thể hủy phiên đã confirmed
+$cancelConfirmedRes = $clientA->request('POST', "/student/payment-sessions/{$sSimId}/cancel");
+it("Không thể hủy phiên thanh toán đã hoàn thành (confirmed) với HTTP 422 CANNOT_CANCEL",
+    $cancelConfirmedRes['status'] === 422
+    && ($cancelConfirmedRes['body']['error']['code'] ?? '') === 'CANNOT_CANCEL'
+);
+
+// 13. Công nợ thay đổi trước khi xác nhận -> simulate-confirm bị từ chối 422 và đổi phiên sang cancelled
+$reqIdRace = 'e1111111-2222-3333-4444-000000000007';
+$qrRaceSess = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 5000000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdRace
+]);
+$sRaceId = (int)($qrRaceSess['body']['data']['session_id'] ?? 0);
+
+$adminClient = new ApiTestClient();
+$adminClient->login('admin', 'Admin@123');
+$adminPayRes = $adminClient->request('POST', "/fee-records/{$s28FrId}/payments", [
+    'amount'     => 6000000,
+    'method'     => 'Tiền mặt',
+    'request_id' => 'e1111111-2222-3333-4444-000000000008',
+    'note'       => 'Admin thu tiền mặt trực tiếp'
+]);
+
+$confirmRaceRes = $clientA->request('POST', "/student/payment-sessions/{$sRaceId}/simulate-confirm");
+$sessRaceStatus = $pdo->query("SELECT status FROM payment_sessions WHERE id = {$sRaceId}")->fetchColumn();
+it("Khi công nợ giảm trước khi xác nhận khiến số tiền phiên vượt nợ, simulate-confirm bị từ chối HTTP 422 và đổi status sang 'cancelled'",
+    $confirmRaceRes['status'] === 422
+    && $sessRaceStatus === 'cancelled'
+);
+
+// 14. Vô hiệu hóa simulation (simulation_enabled = false) -> simulate-confirm trả về HTTP 404
+$reqIdNoSim = 'e1111111-2222-3333-4444-000000000009';
+$qrNoSimSess = $clientA->request('POST', "/student/fee-records/{$s28FrId}/payment-sessions", [
+    'amount'     => 500000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdNoSim
+]);
+$sNoSimId = (int)($qrNoSimSess['body']['data']['session_id'] ?? 0);
+$disabledSimRes = $clientA->request('POST', "/student/payment-sessions/{$sNoSimId}/simulate-confirm", [], ['X-Simulation-Enabled' => '0']);
+it("Khi simulation bị vô hiệu hóa (simulation_enabled = false), simulate-confirm trả về HTTP 404",
+    $disabledSimRes['status'] === 404
+);
+
+// 15. Thẻ thử nghiệm chấp thuận (4111 1111 1111 1111)
+$reqIdCard1 = 'e1111111-2222-3333-4444-000000000010';
+$cardApproveRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 500000,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => $reqIdCard1
+]);
+$cardApproveEntry = $cardApproveRes['body']['data'] ?? [];
+it("Thẻ thử nghiệm chấp thuận (4111 1111 1111 1111) thanh toán thành công (HTTP 201), method='Thẻ Visa/Mastercard', note chứa brand Visa và last4 1111",
+    $cardApproveRes['status'] === 201
+    && ($cardApproveEntry['method'] ?? '') === 'Thẻ Visa/Mastercard'
+    && str_contains($cardApproveEntry['note'] ?? '', 'Visa')
+    && str_contains($cardApproveEntry['note'] ?? '', '1111')
+    && str_starts_with($cardApproveEntry['receipt_no'] ?? '', 'PT-')
+);
+
+// 16. Thẻ thử nghiệm bị từ chối (5555 5555 5555 4444)
+$leBeforeDecline = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+$cardDeclineRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '5555 5555 5555 4444',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '456',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000011'
+]);
+$leAfterDecline = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+it("Thẻ thử nghiệm bị từ chối (5555 5555 5555 4444) trả về HTTP 422 CARD_DECLINED với đúng thông báo quy định và không ghi dòng sổ cái",
+    $cardDeclineRes['status'] === 422
+    && ($cardDeclineRes['body']['error']['code'] ?? '') === 'CARD_DECLINED'
+    && ($cardDeclineRes['body']['error']['message'] ?? '') === 'Thẻ bị từ chối. Vui lòng kiểm tra thông tin hoặc dùng thẻ khác.'
+    && $leAfterDecline === $leBeforeDecline
+);
+
+// 17. Thẻ thử nghiệm timeout (4000 0000 0000 0002)
+$cardTimeoutRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '4000 0000 0000 0002',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '789',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000012'
+]);
+$leAfterTimeout = (int)$pdo->query("SELECT COUNT(*) FROM ledger_entries")->fetchColumn();
+it("Thẻ thử nghiệm timeout (4000 0000 0000 0002) trả về HTTP 502 GATEWAY_TIMEOUT với đúng thông báo quy định và không ghi dòng sổ cái",
+    $cardTimeoutRes['status'] === 502
+    && ($cardTimeoutRes['body']['error']['code'] ?? '') === 'GATEWAY_TIMEOUT'
+    && ($cardTimeoutRes['body']['error']['message'] ?? '') === 'Thanh toán chưa được xử lý. Vui lòng thử lại sau.'
+    && $leAfterTimeout === $leBeforeDecline
+);
+
+// 18. Thẻ chuẩn Luhn khác ngoài danh sách thử nghiệm bị từ chối
+$cardOtherLuhnRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '5105 1051 0510 5100',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '321',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000013'
+]);
+it("Thẻ hợp lệ chuẩn Luhn ngoài danh sách thử nghiệm bị từ chối với HTTP 422 CARD_DECLINED",
+    $cardOtherLuhnRes['status'] === 422
+    && ($cardOtherLuhnRes['body']['error']['code'] ?? '') === 'CARD_DECLINED'
+);
+
+// 19. Dữ liệu thẻ không hợp lệ trả về HTTP 400 kèm chi tiết từng trường
+$cardBadDataRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '4111 1111 1111 1112',
+    'cardholder_name' => 'NGUYEN 123 @#$',
+    'expiry'          => '01/20',
+    'cvv'             => '12',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000014'
+]);
+$badFields = $cardBadDataRes['body']['error']['fields'] ?? [];
+it("Dữ liệu thẻ không hợp lệ (sai Luhn, tên chứa ký tự đặc biệt, hết hạn, CVV ngắn) bị từ chối HTTP 400 kèm lỗi từng trường",
+    $cardBadDataRes['status'] === 400
+    && isset($badFields['card_number'])
+    && isset($badFields['cardholder_name'])
+    && isset($badFields['expiry'])
+    && isset($badFields['cvv'])
+);
+
+// 20. Sinh viên B không thể thanh toán thẻ cho hồ sơ của Sinh viên A
+$cardCrossRes = $clientB->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'NGUYEN VAN AN',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000015'
+]);
+it("Sinh viên B không thể thanh toán thẻ cho hồ sơ của Sinh viên A (HTTP 404 cô lập)",
+    $cardCrossRes['status'] === 404
+);
+
+// 21. Thanh toán thẻ vượt quá công nợ còn lại (balance + 1)
+$cardOverRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 500001,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => 'e1111111-2222-3333-4444-000000000016'
+]);
+it("Thanh toán thẻ vượt quá công nợ còn lại (balance + 1) bị từ chối với HTTP 422 OVERPAYMENT_REJECTED",
+    $cardOverRes['status'] === 422
+    && ($cardOverRes['body']['error']['code'] ?? '') === 'OVERPAYMENT_REJECTED'
+);
+
+// 22. Idempotency của thanh toán thẻ với cùng request_id
+$cardDupRes = $clientA->request('POST', "/student/fee-records/{$s28FrId}/card-payments", [
+    'amount'          => 500000,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => $reqIdCard1
+]);
+it("Gửi lại thanh toán thẻ với cùng request_id trả về HTTP 200 và cùng bản ghi cũ (Idempotency)",
+    $cardDupRes['status'] === 200
+    && (int)($cardDupRes['body']['data']['id'] ?? 0) === (int)($cardApproveEntry['id'] ?? -1)
+);
+
+// 23. Kiểm tra an toàn bảo mật thẻ (Zero Sensitive Data in DB)
+$rawCardsToSearch = ['4111111111111111', '4111 1111 1111 1111', '5555555555554444', '4000000000000002'];
+$foundLeakInDb = false;
+
+$leRows = $pdo->query("SELECT note, reason, gateway_ref FROM ledger_entries")->fetchAll();
+foreach ($leRows as $r) {
+    foreach ($rawCardsToSearch as $card) {
+        if (str_contains((string)$r['note'], $card) || str_contains((string)$r['reason'], $card) || str_contains((string)$r['gateway_ref'], $card)) {
+            $foundLeakInDb = true;
+            break 2;
+        }
+    }
+}
+
+$auditRows = $pdo->query("SELECT payload FROM audit_log")->fetchAll();
+foreach ($auditRows as $r) {
+    foreach ($rawCardsToSearch as $card) {
+        if (str_contains((string)$r['payload'], $card)) {
+            $foundLeakInDb = true;
+            break 2;
+        }
+    }
+}
+
+$psRows = $pdo->query("SELECT method, request_id FROM payment_sessions")->fetchAll();
+foreach ($psRows as $r) {
+    foreach ($rawCardsToSearch as $card) {
+        if (str_contains((string)$r['method'], $card) || str_contains((string)$r['request_id'], $card)) {
+            $foundLeakInDb = true;
+            break 2;
+        }
+    }
+}
+
+it("Kiểm tra an toàn dữ liệu thẻ: Số thẻ đầy đủ, CVV, hạn thẻ tuyệt đối KHÔNG lưu trong cơ sở dữ liệu (ledger_entries, audit_log, payment_sessions)",
+    !$foundLeakInDb
+);
+
+// ============================================================================
+// SUITE 29: Tìm kiếm Sinh viên & Học kỳ khi Tạo Hồ sơ Học phí (Issue 2)
+// ============================================================================
+echo "\n" . COLOR_CYAN . COLOR_BOLD . "▶ 29. Kiểm thử Tìm kiếm Sinh viên & Học kỳ khi Tạo Hồ sơ (Issue 2)" . COLOR_RESET . "\n";
+
+$adm = new ApiTestClient();
+$adm->login('admin', 'Admin@123');
+
+// 1. Tìm kiếm sinh viên với từ khóa không dấu "nguyen" trả về SV001 và SV005
+$stSearchRes1 = $adm->request('GET', '/students/search?q=nguyen');
+$stList1 = $stSearchRes1['body']['data'] ?? [];
+$stCodes1 = array_column($stList1, 'student_code');
+it("Tìm kiếm sinh viên với từ khóa 'nguyen' trả về HTTP 200, gồm SV001, SV005 và các sinh viên mới họ Nguyễn",
+    $stSearchRes1['status'] === 200
+    && in_array('SV001', $stCodes1, true)
+    && in_array('SV005', $stCodes1, true)
+    && count($stList1) === 5
+    && isset($stList1[0]['id'], $stList1[0]['full_name'], $stList1[0]['class_name'])
+);
+
+// 2. Tìm kiếm sinh viên với từ khóa có dấu "Nguyễn" trả về cùng kết quả
+$stSearchRes2 = $adm->request('GET', '/students/search?q=' . urlencode('Nguyễn'));
+$stList2 = $stSearchRes2['body']['data'] ?? [];
+$stCodes2 = array_column($stList2, 'student_code');
+it("Tìm kiếm sinh viên với từ khóa 'Nguyễn' (có dấu) trả về cùng kết quả gồm SV001 và SV005",
+    $stSearchRes2['status'] === 200
+    && in_array('SV001', $stCodes2, true)
+    && in_array('SV005', $stCodes2, true)
+    && count($stList2) === 5
+);
+
+// 3. Tìm kiếm học kỳ với từ khóa "HK1" trả về các học kỳ 1
+$semSearchHk1 = $adm->request('GET', '/semesters/search?q=HK1');
+$semListHk1 = $semSearchHk1['body']['data'] ?? [];
+$allAreTerm1 = count($semListHk1) > 0;
+foreach ($semListHk1 as $s) {
+    if ((int)($s['term_no'] ?? 0) !== 1) {
+        $allAreTerm1 = false;
+        break;
+    }
+}
+it("Tìm kiếm học kỳ với từ khóa 'HK1' trả về đúng các học kỳ 1",
+    $semSearchHk1['status'] === 200
+    && $allAreTerm1
+    && count($semListHk1) >= 2
+    && isset($semListHk1[0]['id'], $semListHk1[0]['label'])
+);
+
+// 4. Tìm kiếm học kỳ với từ khóa "2026" trả về các học kỳ liên quan đến năm 2026
+$semSearch2026 = $adm->request('GET', '/semesters/search?q=2026');
+$semList2026 = $semSearch2026['body']['data'] ?? [];
+$allContain2026 = count($semList2026) > 0;
+foreach ($semList2026 as $s) {
+    $lbl = (string)($s['label'] ?? '');
+    $yr = (int)($s['academic_year_start'] ?? 0);
+    if (!str_contains($lbl, '2026') && $yr !== 2026 && ($yr + 1) !== 2026) {
+        $allContain2026 = false;
+        break;
+    }
+}
+it("Tìm kiếm học kỳ với từ khóa '2026' trả về đúng các học kỳ liên quan năm 2026",
+    $semSearch2026['status'] === 200
+    && $allContain2026
+    && count($semList2026) >= 2
+);
+
+// 5. Tìm kiếm học kỳ với từ khóa "Học kỳ 2" chỉ trả về bản ghi HK2
+$semSearchHk2 = $adm->request('GET', '/semesters/search?q=' . urlencode('Học kỳ 2'));
+$semListHk2 = $semSearchHk2['body']['data'] ?? [];
+$allAreTerm2 = count($semListHk2) > 0;
+foreach ($semListHk2 as $s) {
+    if ((int)($s['term_no'] ?? 0) !== 2) {
+        $allAreTerm2 = false;
+        break;
+    }
+}
+it("Tìm kiếm học kỳ với từ khóa 'Học kỳ 2' chỉ trả về các bản ghi HK2",
+    $semSearchHk2['status'] === 200
+    && $allAreTerm2
+    && count($semListHk2) === 2
+);
+
+// 6. Truy vấn tìm kiếm rỗng trả về mảng data rỗng và thông điệp trống
+$stEmptySearch = $adm->request('GET', '/students/search?q=');
+$semEmptySearch = $adm->request('GET', '/semesters/search?q=');
+it("Truy vấn tìm kiếm sinh viên và học kỳ rỗng trả về data rỗng và thông điệp trống",
+    $stEmptySearch['status'] === 200
+    && ($stEmptySearch['body']['data'] ?? null) === []
+    && ($stEmptySearch['body']['message'] ?? '') === 'Nhập mã hoặc tên để tìm sinh viên.'
+    && $semEmptySearch['status'] === 200
+    && ($semEmptySearch['body']['data'] ?? null) === []
+);
+
+// 7. Truy vấn quá 100 ký tự (101 ký tự) bị từ chối với HTTP 400 kèm lỗi trường
+$longQ = str_repeat('a', 101);
+$stLongSearch = $adm->request('GET', '/students/search?q=' . $longQ);
+$semLongSearch = $adm->request('GET', '/semesters/search?q=' . $longQ);
+it("Truy vấn tìm kiếm dài hơn 100 ký tự bị từ chối với HTTP 400 và trường error.fields.q",
+    $stLongSearch['status'] === 400
+    && !empty($stLongSearch['body']['error']['fields']['q'])
+    && $semLongSearch['status'] === 400
+    && !empty($semLongSearch['body']['error']['fields']['q'])
+);
+
+// 8. Kết quả tìm kiếm sinh viên bị giới hạn tối đa 20 kết quả (Cap at 20)
+$pdo->beginTransaction();
+for ($i = 100; $i < 130; $i++) {
+    $pdo->prepare("INSERT INTO students (student_code, full_name, name_search, class_name) VALUES (:c, :n, 'test cap', 'K24')")
+        ->execute(['c' => "SVCAP{$i}", 'n' => "Sinh viên Cap {$i}"]);
+}
+$pdo->commit();
+$capSearch = $adm->request('GET', '/students/search?q=SVCAP');
+$pdo->prepare("DELETE FROM students WHERE student_code LIKE 'SVCAP%'")->execute();
+it("Kết quả tìm kiếm sinh viên được giới hạn tối đa 20 bản ghi",
+    $capSearch['status'] === 200
+    && count($capSearch['body']['data'] ?? []) === 20
+);
+
+// 9. Tài khoản sinh viên hoặc chưa đăng nhập không có quyền truy cập endpoint tìm kiếm (HTTP 403 / 401)
+$nonAdminSearch = $clientA->request('GET', '/students/search?q=nguyen');
+$guestSearch = (new ApiTestClient())->request('GET', '/students/search?q=nguyen');
+it("Tài khoản sinh viên bị từ chối truy cập endpoint tìm kiếm với HTTP 403, khách vãng lai bị từ chối với HTTP 401",
+    $nonAdminSearch['status'] === 403
+    && $guestSearch['status'] === 401
+);
+
+// 10. Tạo hồ sơ học phí với student_id không tồn tại bị từ chối HTTP 404 và có trường lỗi
+$frCountBefore = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+$fakeStCreate = $adm->request('POST', '/fee-records', [
+    'student_id'         => 999999,
+    'semester_id'        => 3,
+    'registered_credits' => 15
+]);
+$frCountAfter1 = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+it("Tạo hồ sơ học phí với student_id không tồn tại bị từ chối HTTP 404 kèm trường lỗi và không ghi dòng",
+    $fakeStCreate['status'] === 404
+    && !empty($fakeStCreate['body']['error']['fields']['student_id'])
+    && $frCountAfter1 === $frCountBefore
+);
+
+// 11. Tạo hồ sơ học phí với semester_id không tồn tại bị từ chối HTTP 404 và có trường lỗi
+$fakeSemCreate = $adm->request('POST', '/fee-records', [
+    'student_id'         => 1,
+    'semester_id'        => 999999,
+    'registered_credits' => 15
+]);
+$frCountAfter2 = (int)$pdo->query("SELECT COUNT(*) FROM fee_records")->fetchColumn();
+it("Tạo hồ sơ học phí với semester_id không tồn tại bị từ chối HTTP 404 kèm trường lỗi và không ghi dòng",
+    $fakeSemCreate['status'] === 404
+    && !empty($fakeSemCreate['body']['error']['fields']['semester_id'])
+    && $frCountAfter2 === $frCountBefore
+);
+
+// ============================================================================
+// SUITE 30: Hóa đơn Thanh toán Học phí Sinh viên (Part 1)
+// ============================================================================
+echo "\n" . COLOR_CYAN . COLOR_BOLD . "▶ 30. Kiểm thử Hóa đơn Thanh toán Học phí Sinh viên (Part 1)" . COLOR_RESET . "\n";
+
+// 1. Sinh viên hoàn thành thanh toán QR tạo chính xác 1 hóa đơn với định dạng HD-YYYYMMDD-NNNN
+$stClient = new ApiTestClient();
+$stLoginRes = $stClient->login('sv002', 'Student@002');
+$stId2 = (int)($stLoginRes['body']['data']['user']['student_id'] ?? 2);
+
+$s30FrId = 2; // SV002 HK1 2026-2027 có nợ 4.650.000đ
+$reqIdQr1 = 's30-qr-' . uniqid();
+
+$qrSessionRes = $stClient->request('POST', "/student/fee-records/{$s30FrId}/payment-sessions", [
+    'amount'     => 500000,
+    'method'     => 'Mã QR',
+    'request_id' => $reqIdQr1
+]);
+$qrSessionId = (int)($qrSessionRes['body']['data']['session_id'] ?? 0);
+
+$qrSimRes = $stClient->request('POST', "/student/payment-sessions/{$qrSessionId}/simulate-confirm", []);
+$qrLedgerId = (int)($qrSimRes['body']['data']['ledger_entry']['id'] ?? 0);
+
+$qrBillStmt = $pdo->prepare("SELECT * FROM bills WHERE ledger_entry_id = :lid");
+$qrBillStmt->execute(['lid' => $qrLedgerId]);
+$qrBill = $qrBillStmt->fetch();
+
+it("Sinh viên hoàn thành thanh toán QR tạo chính xác 1 hóa đơn với mã định dạng HD-YYYYMMDD-NNNN",
+    $qrSimRes['status'] === 200
+    && $qrLedgerId > 0
+    && !empty($qrBill)
+    && preg_match('/^HD-\d{8}-\d{4}$/', (string)$qrBill['bill_no']) === 1
+);
+
+// 2. Sinh viên thanh toán thẻ tạo chính xác 1 hóa đơn
+$cardPayReqId = 's30-card-' . uniqid();
+$cardPayRes = $stClient->request('POST', "/student/fee-records/{$s30FrId}/card-payments", [
+    'amount'          => 200000,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => $cardPayReqId
+]);
+$cardLedgerId = (int)($cardPayRes['body']['data']['id'] ?? 0);
+$cardBillStmt = $pdo->prepare("SELECT * FROM bills WHERE ledger_entry_id = :lid");
+$cardBillStmt->execute(['lid' => $cardLedgerId]);
+$cardBill = $cardBillStmt->fetch();
+
+it("Sinh viên hoàn thành thanh toán thẻ tạo chính xác 1 hóa đơn với mã định dạng HD-YYYYMMDD-NNNN",
+    $cardPayRes['status'] === 201
+    && $cardLedgerId > 0
+    && !empty($cardBill)
+    && preg_match('/^HD-\d{8}-\d{4}$/', (string)$cardBill['bill_no']) === 1
+);
+
+// 3. Giao dịch thanh toán thẻ thất bại / bị từ chối KHÔNG tạo hóa đơn
+$billsCountBefore = (int)$pdo->query("SELECT COUNT(*) FROM bills")->fetchColumn();
+$failCardRes = $stClient->request('POST', "/student/fee-records/{$s30FrId}/card-payments", [
+    'amount'          => 100000,
+    'card_number'     => '5555 5555 5555 4444',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => 's30-card-fail-' . uniqid()
+]);
+$billsCountAfterFail = (int)$pdo->query("SELECT COUNT(*) FROM bills")->fetchColumn();
+
+it("Giao dịch thanh toán thẻ thất bại / bị từ chối trả về HTTP 422 và KHÔNG tạo hóa đơn",
+    $failCardRes['status'] === 422
+    && $billsCountAfterFail === $billsCountBefore
+);
+
+// 4. Gửi trùng request_id không tạo thêm hóa đơn thứ hai (Idempotency)
+$dupCardRes = $stClient->request('POST', "/student/fee-records/{$s30FrId}/card-payments", [
+    'amount'          => 200000,
+    'card_number'     => '4111 1111 1111 1111',
+    'cardholder_name' => 'TRAN THI BINH',
+    'expiry'          => '12/28',
+    'cvv'             => '123',
+    'request_id'      => $cardPayReqId
+]);
+$dupBillsCount = (int)$pdo->query("SELECT COUNT(*) FROM bills WHERE ledger_entry_id = {$cardLedgerId}")->fetchColumn();
+
+it("Gửi trùng request_id trả về HTTP 200 và giữ nguyên chính xác 1 hóa đơn duy nhất (Idempotency)",
+    $dupCardRes['status'] === 200
+    && $dupBillsCount === 1
+);
+
+// 5. Giá trị snapshot khớp tuyệt đối với sổ cái: total_paid_after = total_paid_before + amount
+$snap = json_decode((string)$cardBill['snapshot'], true);
+$paidBefore = (int)($snap['fee_record']['total_paid_before'] ?? $snap['total_paid_before'] ?? -1);
+$amtPaid    = (int)($snap['fee_record']['amount_paid'] ?? $snap['amount'] ?? -1);
+$paidAfter  = (int)($snap['fee_record']['total_paid_after'] ?? $snap['total_paid_after'] ?? -2);
+$balAfter   = (int)($snap['fee_record']['balance_after'] ?? $snap['remaining_balance'] ?? -1);
+$netAmount  = (int)($snap['fee_record']['net_amount'] ?? $snap['net_due'] ?? -1);
+
+it("Giá trị snapshot của hóa đơn khớp tuyệt đối với công thức sổ cái (total_paid_after = total_paid_before + amount)",
+    $paidAfter === ($paidBefore + $amtPaid)
+    && $balAfter === ($netAmount - $paidAfter)
+    && ($snap['gateway_brand'] ?? $snap['payment']['card_brand'] ?? '') === 'Visa'
+    && ($snap['gateway_last4'] ?? $snap['payment']['card_last4'] ?? '') === '1111'
+);
+
+// 6. Endpoint GET /api/student/bills/{ledgerEntryId} trả về dữ liệu chuẩn JSON
+$getBillRes = $stClient->request('GET', "/student/bills/{$cardLedgerId}");
+it("Endpoint GET /api/student/bills/{id} trả về HTTP 200 kèm đúng dữ liệu JSON của hóa đơn",
+    $getBillRes['status'] === 200
+    && ($getBillRes['body']['data']['bill_no'] ?? '') === $cardBill['bill_no']
+    && !empty($getBillRes['body']['data']['snapshot'])
+);
+
+// 7. Endpoint GET /api/student/bills/{ledgerEntryId}/download trả về Content-Disposition attachment và HTML an toàn
+$dlBillRes = $stClient->request('GET', "/student/bills/{$cardLedgerId}/download");
+$dlCdHeader = $dlBillRes['headers']['content-disposition'] ?? '';
+$dlRawHtml = $dlBillRes['raw'] ?? '';
+it("Endpoint GET /api/student/bills/{id}/download trả về file đính kèm với Content-Disposition và HTML không chứa script",
+    $dlBillRes['status'] === 200
+    && str_contains($dlCdHeader, 'attachment;')
+    && str_contains($dlCdHeader, 'filename="bill-' . $cardBill['bill_no'] . '.html"')
+    && !str_contains(strtolower($dlRawHtml), '<script')
+    && str_contains($dlRawHtml, $cardBill['bill_no'])
+);
+
+// 8. Sinh viên A truy cập hóa đơn của sinh viên B bị trả về HTTP 404 (cô lập dữ liệu)
+$otherStudentClient = new ApiTestClient();
+$otherStudentClient->login('sv001', 'Student@001');
+$crossBillGet = $otherStudentClient->request('GET', "/student/bills/{$cardLedgerId}");
+$crossBillDl  = $otherStudentClient->request('GET', "/student/bills/{$cardLedgerId}/download");
+
+it("Sinh viên A truy cập hóa đơn của sinh viên B bị từ chối với HTTP 404 (cả JSON và tải về)",
+    $crossBillGet['status'] === 404
+    && $crossBillDl['status'] === 404
+);
+
+// 9. Quét toàn bộ nội dung HTML tải về khẳng định không xuất hiện số thẻ đầy đủ
+$fullPanLeaks = ['4111 1111 1111 1111', '4111111111111111'];
+$hasPanLeak = false;
+foreach ($fullPanLeaks as $pan) {
+    if (str_contains($dlRawHtml, $pan)) {
+        $hasPanLeak = true;
+        break;
+    }
+}
+it("Quét toàn bộ HTML hóa đơn: Tuyệt đối không xuất hiện số thẻ đầy đủ (chỉ hiển thị brand và last4)",
+    !$hasPanLeak && str_contains($dlRawHtml, 'Visa') && str_contains($dlRawHtml, '1111')
+);
+
+// ============================================================================
+// SUITE 31: Quản lý Phiên làm việc & Đăng xuất khi Đóng Tab (Part 2)
+// ============================================================================
+echo "\n" . COLOR_CYAN . COLOR_BOLD . "▶ 31. Kiểm thử Quản lý Phiên làm việc & Đăng xuất khi Đóng Tab (Part 2)" . COLOR_RESET . "\n";
+
+// Helper hàm chỉnh sửa timestamp session file
+function modify_sess_timestamps(string $sessId, ?int $lastActivity = null, ?int $createdAt = null): bool {
+    $sessFile = 'C:/xampp/tmp/sess_' . $sessId;
+    if (!file_exists($sessFile)) {
+        return false;
+    }
+    $content = file_get_contents($sessFile);
+    if ($lastActivity !== null) {
+        $content = preg_replace('/last_activity\|i:\d+;/', 'last_activity|i:' . $lastActivity . ';', $content);
+    }
+    if ($createdAt !== null) {
+        $content = preg_replace('/created_at\|i:\d+;/', 'created_at|i:' . $createdAt . ';', $content);
+    }
+    return file_put_contents($sessFile, $content) !== false;
+}
+
+// 1. Idle timeout (30 phút không hoạt động) -> 401 SESSION_EXPIRED
+$idleClient = new ApiTestClient();
+$idleLogin = $idleClient->login('sv002', 'Student@002');
+$idleSessId = $idleClient->getSessionId();
+it("Đăng nhập thành công và lấy được mã phiên TUITION_SESSID",
+    $idleLogin['status'] === 200 && !empty($idleSessId)
+);
+
+// Sửa last_activity lùi về 31 phút trước (1860 giây)
+modify_sess_timestamps($idleSessId, time() - 1860, null);
+$idleExpiredRes = $idleClient->request('GET', '/me');
+$idleSubsequentRes = $idleClient->request('GET', '/me');
+it("Phiên quá hạn idle timeout (30 phút) bị hủy và trả về HTTP 401 SESSION_EXPIRED trên request tiếp theo",
+    $idleExpiredRes['status'] === 401
+    && ($idleExpiredRes['body']['error']['code'] ?? '') === 'SESSION_EXPIRED'
+    && $idleSubsequentRes['status'] === 401
+);
+
+// 2. Absolute lifetime (8 giờ tối đa) -> 401 SESSION_MAX_LIFETIME
+$absClient = new ApiTestClient();
+$absLogin = $absClient->login('sv002', 'Student@002');
+$absSessId = $absClient->getSessionId();
+// Sửa created_at lùi về 8 giờ 1 phút trước (28860 giây)
+modify_sess_timestamps($absSessId, time(), time() - 28860);
+$absExpiredRes = $absClient->request('GET', '/me');
+it("Phiên quá hạn absolute lifetime (8 giờ) bị hủy và trả về HTTP 401 SESSION_MAX_LIFETIME",
+    $absExpiredRes['status'] === 401
+    && ($absExpiredRes['body']['error']['code'] ?? '') === 'SESSION_MAX_LIFETIME'
+);
+
+// 3. POST /api/logout-beacon với logout_token hợp lệ hủy phiên
+$beaconClient = new ApiTestClient();
+$bLogin = $beaconClient->login('sv002', 'Student@002');
+$meRes = $beaconClient->request('GET', '/me');
+$logoutToken = $meRes['body']['data']['logout_token'] ?? '';
+it("GET /api/me trả về logout_token dành riêng cho beacon trong bộ nhớ",
+    !empty($logoutToken) && strlen($logoutToken) >= 32
+);
+
+$beaconRes = $beaconClient->request('POST', '/logout-beacon', [
+    'logout_token' => $logoutToken
+]);
+$afterBeaconMe = $beaconClient->request('GET', '/me');
+it("Gửi logout beacon với token hợp lệ trả về HTTP 204 và hủy phiên đăng nhập ngay lập tức",
+    $beaconRes['status'] === 204
+    && $afterBeaconMe['status'] === 401
+);
+
+// 4. POST /api/logout-beacon với token sai KHÔNG hủy phiên (trả về 204 nhưng giữ phiên)
+$wrongBeaconClient = new ApiTestClient();
+$wbLogin = $wrongBeaconClient->login('sv002', 'Student@002');
+$wrongBeaconRes = $wrongBeaconClient->request('POST', '/logout-beacon', [
+    'logout_token' => 'incorrect_token_random_1234567890abcdef'
+]);
+$afterWrongBeaconMe = $wrongBeaconClient->request('GET', '/me');
+it("Gửi logout beacon với token sai trả về HTTP 204 nhưng KHÔNG hủy phiên của người dùng",
+    $wrongBeaconRes['status'] === 204
+    && $afterWrongBeaconMe['status'] === 200
+    && ($afterWrongBeaconMe['body']['data']['username'] ?? '') === 'sv002'
+);
+
+// 5. POST /api/logout-beacon từ chối trường lạ hoặc payload > 1024 bytes (HTTP 400)
+$unknownFieldRes = $wrongBeaconClient->request('POST', '/logout-beacon', [
+    'logout_token' => 'some_token',
+    'attacker_injected_field' => 'malicious'
+]);
+$oversizedPayload = json_encode(['logout_token' => str_repeat('A', 1050)]);
+$oversizedRes = $wrongBeaconClient->request('POST', '/logout-beacon', $oversizedPayload);
+
+it("POST /api/logout-beacon từ chối payload có trường lạ hoặc vượt quá 1024 bytes với HTTP 400",
+    $unknownFieldRes['status'] === 400
+    && ($unknownFieldRes['body']['error']['code'] ?? '') === 'UNKNOWN_FIELDS'
+    && $oversizedRes['status'] === 400
+    && ($oversizedRes['body']['error']['code'] ?? '') === 'PAYLOAD_TOO_LARGE'
+);
+
+// 6. Endpoint /api/logout thông thường bắt buộc kiểm tra CSRF token
+$csrfTestClient = new ApiTestClient();
+$csrfTestClient->login('sv002', 'Student@002');
+$noCsrfLogout = $csrfTestClient->request('POST', '/logout', [], ['X-CSRF-Token' => '']);
+it("Endpoint POST /api/logout thông thường từ chối khi thiếu CSRF token (HTTP 403)",
+    $noCsrfLogout['status'] === 403
+);
+$validCsrfLogout = $csrfTestClient->request('POST', '/logout', []);
+it("Endpoint POST /api/logout thông thường với CSRF token hợp lệ trả về HTTP 200 và đăng xuất thành công",
+    $validCsrfLogout['status'] === 200
+);
+
+// ============================================================================
+// SUITE 32: Kiểm thử Dữ liệu Mẫu Mới (Part 3)
+// ============================================================================
+echo "\n" . COLOR_CYAN . COLOR_BOLD . "▶ 32. Kiểm thử Dữ liệu Mẫu Mới & Các Tình huống Thực tế (Part 3)" . COLOR_RESET . "\n";
+
+// 1. Kiểm tra toàn bộ hồ sơ học phí (bao gồm SV014-SV024) khớp công thức tính chuẩn
+$allFrs = $pdo->query(
+    "SELECT fr.id, fr.registered_credits, fr.rate_snapshot, fr.gross_tuition,
+            COALESCE((
+                CASE 
+                    WHEN ex.type = 'PERCENT' THEN FLOOR(fr.gross_tuition * ex.value / 100)
+                    WHEN ex.type = 'FIXED' THEN LEAST(ex.value, fr.gross_tuition)
+                    ELSE 0 
+                END
+            ), 0) AS expected_exemption,
+            COALESCE((SELECT SUM(amount) FROM ledger_entries WHERE fee_record_id = fr.id), 0) AS actual_paid
+     FROM fee_records fr
+     LEFT JOIN exemptions ex ON fr.id = ex.fee_record_id"
+)->fetchAll();
+
+$allFormulasValid = true;
+$mismatchDetails = [];
+foreach ($allFrs as $r) {
+    $expectedGross = (int)$r['registered_credits'] * (int)$r['rate_snapshot'];
+    if ((int)$r['gross_tuition'] !== $expectedGross) {
+        $allFormulasValid = false;
+        $mismatchDetails[] = "FR #{$r['id']}: expected {$expectedGross}, got {$r['gross_tuition']}";
+    }
+}
+it("Toàn bộ hồ sơ học phí mẫu (cũ và mới) tuân thủ chính xác công thức gross_tuition = registered_credits * rate_snapshot",
+    $allFormulasValid && count($allFrs) >= 22
+);
+
+// 2. Toàn bộ hóa đơn mẫu (bills) có snapshot khớp hoàn toàn với ledger_entries và fee_records
+$allBills = $pdo->query(
+    "SELECT b.*, l.amount AS ledger_amount, l.method AS ledger_method, l.receipt_no AS ledger_receipt,
+            fr.gross_tuition, fr.registered_credits, s.student_code
+     FROM bills b
+     JOIN ledger_entries l ON b.ledger_entry_id = l.id
+     JOIN fee_records fr ON l.fee_record_id = fr.id
+     JOIN students s ON fr.student_id = s.id"
+)->fetchAll();
+
+$allBillsMatch = true;
+foreach ($allBills as $b) {
+    $bsnap = json_decode((string)$b['snapshot'], true);
+    if (!is_array($bsnap)) {
+        $allBillsMatch = false;
+        break;
+    }
+    $snapAmt = (int)($bsnap['amount'] ?? $bsnap['this_payment_amount'] ?? 0);
+    $snapStudentCode = (string)($bsnap['student_code'] ?? ($bsnap['student']['student_code'] ?? ''));
+    if ($snapAmt !== (int)$b['ledger_amount'] || $snapStudentCode !== (string)$b['student_code']) {
+        $allBillsMatch = false;
+        break;
+    }
+}
+it("Toàn bộ các hóa đơn mẫu có snapshot khớp hoàn toàn với ledger_entries và students",
+    $allBillsMatch && count($allBills) >= 7
+);
+
+// 3. Số biên lai (receipt_counters) và số hóa đơn (bill_counters) không có khoảng cách (gapless) trong từng ngày
+$rcRows = $pdo->query("SELECT * FROM receipt_counters")->fetchAll();
+$allReceiptsGapless = true;
+foreach ($rcRows as $rc) {
+    $day = $rc['day'];
+    $lastNo = (int)$rc['last_no'];
+    $dayStr = str_replace('-', '', $day);
+    $rcs = $pdo->query("SELECT receipt_no FROM ledger_entries WHERE receipt_no LIKE 'PT-{$dayStr}-%' ORDER BY receipt_no ASC")->fetchAll(PDO::FETCH_COLUMN);
+    if (count($rcs) !== $lastNo) {
+        $allReceiptsGapless = false;
+        break;
+    }
+    for ($idx = 1; $idx <= $lastNo; $idx++) {
+        $expectedRNo = sprintf('PT-%s-%04d', $dayStr, $idx);
+        if ($rcs[$idx - 1] !== $expectedRNo) {
+            $allReceiptsGapless = false;
+            break 2;
+        }
+    }
+}
+
+$bcRows = $pdo->query("SELECT * FROM bill_counters")->fetchAll();
+$allBillsGapless = true;
+foreach ($bcRows as $bc) {
+    $day = $bc['day'];
+    $lastNo = (int)$bc['last_no'];
+    $dayStr = str_replace('-', '', $day);
+    $billsForDay = $pdo->query("SELECT bill_no FROM bills WHERE bill_no LIKE 'HD-{$dayStr}-%' ORDER BY bill_no ASC")->fetchAll(PDO::FETCH_COLUMN);
+    if (count($billsForDay) !== $lastNo) {
+        $allBillsGapless = false;
+        break;
+    }
+    for ($idx = 1; $idx <= $lastNo; $idx++) {
+        $expectedBNo = sprintf('HD-%s-%04d', $dayStr, $idx);
+        if ($billsForDay[$idx - 1] !== $expectedBNo) {
+            $allBillsGapless = false;
+            break 2;
+        }
+    }
+}
+
+it("Số biên lai (PT-) và số hóa đơn (HD-) được đánh số liên tục không có khoảng cách theo từng ngày",
+    $allReceiptsGapless && $allBillsGapless
+);
+
+// 4. Tìm kiếm từ khóa 'Long' trả về cả hai sinh viên trùng tên 'Nguyễn Hoàng Long' (SV014 và SV015)
+$admTest = new ApiTestClient();
+$admTest->login('admin', 'Admin@123');
+$longSearchRes = $admTest->request('GET', '/students/search?q=Long');
+$longStudents = $longSearchRes['body']['data'] ?? [];
+$longCodes = array_column($longStudents, 'student_code');
+
+it("Tìm kiếm sinh viên với từ khóa 'Long' trả về cả 2 sinh viên trùng tên (SV014 và SV015)",
+    $longSearchRes['status'] === 200
+    && in_array('SV014', $longCodes, true)
+    && in_array('SV015', $longCodes, true)
+);
+
+// 5. Kiểm tra chấp nhận tên sinh viên 100 ký tự và từ chối tên 101 ký tự
+$sv017 = $pdo->query("SELECT * FROM students WHERE student_code = 'SV017'")->fetch();
+$exact100NameLen = mb_strlen((string)($sv017['full_name'] ?? ''), 'UTF-8');
+
+$name101 = str_repeat('A', 101);
+$reject101Res = $admTest->request('GET', '/students/search?q=' . $name101);
+
+it("Tên sinh viên SV017 đạt đúng 100 ký tự chuẩn UTF-8 và tìm kiếm vượt quá 100 ký tự (101 ký tự) bị từ chối với HTTP 400",
+    $exact100NameLen === 100
+    && $reject101Res['status'] === 400
+);
+
+// 6. Kiểm tra tính lặp lại (Repeatability): Nạp lại schema.sql, seed.sql, seed_users.php liên tiếp không lỗi
+$repeatabilityOk = true;
+try {
+    reset_test_database($rootPdo);
+    reset_test_database($rootPdo);
+} catch (Throwable $t) {
+    $repeatabilityOk = false;
+}
+
+$recountStudents = (int)$pdo->query("SELECT COUNT(*) FROM students")->fetchColumn();
+$recountBills = (int)$pdo->query("SELECT COUNT(*) FROM bills")->fetchColumn();
+
+it("Nạp lại schema.sql, seed.sql, và seed_users.php hai lần liên tiếp chạy trơn tru, không lỗi và dữ liệu toàn vẹn",
+    $repeatabilityOk
+    && $recountStudents === 24
+    && $recountBills === 7
 );
 
 // ----------------------------------------------------------------------------

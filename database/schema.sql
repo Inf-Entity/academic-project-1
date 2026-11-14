@@ -8,8 +8,11 @@ SET FOREIGN_KEY_CHECKS = 0;
 
 -- Xóa các bảng theo thứ tự bảng con trước, bảng cha sau (Child-first order)
 DROP VIEW IF EXISTS `v_fee_record_summaries`;
+DROP TABLE IF EXISTS `bills`;
+DROP TABLE IF EXISTS `payment_sessions`;
 DROP TABLE IF EXISTS `user_nav_state`;
 DROP TABLE IF EXISTS `audit_log`;
+DROP TABLE IF EXISTS `bill_counters`;
 DROP TABLE IF EXISTS `receipt_counters`;
 DROP TABLE IF EXISTS `refund_requests`;
 DROP TABLE IF EXISTS `ledger_entries`;
@@ -126,14 +129,16 @@ CREATE TABLE `exemptions` (
 
 -- 7. Sổ cái giao dịch Thu / Đảo mục (Append-only Ledger Entries)
 CREATE TABLE `ledger_entries` (
-    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
     `fee_record_id` INT NOT NULL,
     `entry_type` ENUM('payment', 'reversal', 'transfer_out', 'transfer_in') NOT NULL,
     `amount` BIGINT NOT NULL,
-    `method` ENUM('Tiền mặt', 'Chuyển khoản', 'Thẻ') NOT NULL,
+    -- Mapping phương thức thanh toán: 'Tiền mặt' (chỉ dành cho cán bộ quản trị tại quầy),
+    -- 'Chuyển khoản' và 'Thẻ' (lịch sử/admin), 'Mã QR' lưu dạng 'Mã QR', 'Thẻ Visa/Mastercard' lưu dạng 'Thẻ Visa/Mastercard'
+    `method` ENUM('Tiền mặt', 'Chuyển khoản', 'Thẻ', 'Mã QR', 'Thẻ Visa/Mastercard') NOT NULL,
     `entry_date` DATE NOT NULL,
     `receipt_no` VARCHAR(20) UNIQUE NULL,
-    `reverses_entry_id` INT NULL UNIQUE,
+    `reverses_entry_id` BIGINT NULL UNIQUE,
     `transfer_group_id` CHAR(36) NULL,
     `reason` VARCHAR(200) NULL,
     `note` VARCHAR(255) NULL,
@@ -146,6 +151,16 @@ CREATE TABLE `ledger_entries` (
     CONSTRAINT `fk_ledger_entries_ledger_entries` FOREIGN KEY (`reverses_entry_id`) REFERENCES `ledger_entries` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT `fk_ledger_entries_users` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
     CONSTRAINT `chk_ledger_amount` CHECK (`amount` > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 7b. Bảng Hóa đơn thanh toán sinh viên (Bills - Append-only Snapshot)
+CREATE TABLE `bills` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `ledger_entry_id` BIGINT UNIQUE NOT NULL,
+    `bill_no` VARCHAR(20) UNIQUE NOT NULL,
+    `snapshot` JSON NOT NULL,
+    `created_at` DATETIME NOT NULL,
+    CONSTRAINT `fk_bills_ledger_entry` FOREIGN KEY (`ledger_entry_id`) REFERENCES `ledger_entries` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 8. Bảng Yêu cầu Hoàn trả tiền thừa (Refund Requests)
@@ -176,6 +191,12 @@ CREATE TABLE `receipt_counters` (
     `last_no` INT NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 9b. Bảng Bộ đếm Số hóa đơn theo ngày (Bill Counters: HD-YYYYMMDD-NNNN)
+CREATE TABLE `bill_counters` (
+    `day` DATE NOT NULL PRIMARY KEY,
+    `last_no` INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 10. Nhật ký Kiểm toán hệ thống (Audit Log - Append-only)
 CREATE TABLE `audit_log` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -189,7 +210,25 @@ CREATE TABLE `audit_log` (
     CONSTRAINT `fk_audit_log_users` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 11. Triggers chuẩn hóa mã sinh viên tự động thành chữ in hoa (Uppercase Normalization)
+-- 11. Phiên Thanh toán Mô phỏng Sinh viên (Simulated Payment Sessions)
+CREATE TABLE `payment_sessions` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `student_id` BIGINT NOT NULL,
+    `fee_record_id` INT NOT NULL,
+    `status` ENUM('pending', 'confirmed', 'expired', 'cancelled') NOT NULL DEFAULT 'pending',
+    `amount` BIGINT NOT NULL,
+    `method` VARCHAR(50) NOT NULL,
+    `request_id` CHAR(36) NOT NULL UNIQUE,
+    `expires_at` DATETIME NOT NULL,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `confirmed_at` DATETIME NULL,
+    INDEX `idx_pay_sess_lookup` (`fee_record_id`, `status`),
+    INDEX `idx_pay_sess_student` (`student_id`, `created_at`),
+    CONSTRAINT `fk_pay_sess_students` FOREIGN KEY (`student_id`) REFERENCES `students` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT `fk_pay_sess_fee_records` FOREIGN KEY (`fee_record_id`) REFERENCES `fee_records` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 12. Triggers chuẩn hóa mã sinh viên tự động thành chữ in hoa (Uppercase Normalization)
 DROP TRIGGER IF EXISTS `trg_students_before_insert`;
 CREATE TRIGGER `trg_students_before_insert` BEFORE INSERT ON `students` FOR EACH ROW SET NEW.student_code = UPPER(TRIM(NEW.student_code));
 

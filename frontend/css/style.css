@@ -1228,13 +1228,16 @@ dialog::backdrop {
     visibility: hidden;
   }
 
-  /* Chỉ hiển thị khu vực biên lai khi mở biên lai */
+  /* Chỉ hiển thị khu vực biên lai hoặc hóa đơn khi mở */
   #receipt-print-area:not([hidden]),
-  #receipt-print-area:not([hidden]) * {
+  #receipt-print-area:not([hidden]) *,
+  #bill-print-area:not([hidden]),
+  #bill-print-area:not([hidden]) * {
     visibility: visible;
   }
 
-  #receipt-print-area:not([hidden]) {
+  #receipt-print-area:not([hidden]),
+  #bill-print-area:not([hidden]) {
     position: absolute;
     left: 0;
     top: 0;

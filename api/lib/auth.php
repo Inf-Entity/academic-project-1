@@ -18,6 +18,7 @@ function start_session_safe(): void {
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
 
     session_name('TUITION_SESSID');
+    ini_set('session.gc_maxlifetime', '28800');
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',
@@ -183,6 +184,7 @@ function login_user(string $username, string $password): array {
     $_SESSION['created_at'] = time();
     $_SESSION['last_activity'] = time();
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    $_SESSION['logout_token'] = bin2hex(random_bytes(32));
 
     log_audit((int)$user['id'], 'login_success', 'users', (string)$user['id'], ['username' => $username]);
 
@@ -209,7 +211,8 @@ function login_user(string $username, string $password): array {
         'role'                 => $user['role'],
         'student_id'           => $user['student_id'] !== null ? (int)$user['student_id'] : null,
         'must_change_password' => (int)$user['must_change_password'],
-        'csrf_token'           => $_SESSION['csrf_token']
+        'csrf_token'           => $_SESSION['csrf_token'],
+        'logout_token'         => $_SESSION['logout_token'] ?? null
     ];
 }
 
