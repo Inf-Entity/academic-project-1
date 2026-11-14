@@ -1,0 +1,10 @@
+{
+    "database": "tuition_perf",
+    "execution_time_seconds": 6.65,
+    "students_count": 500,
+    "semesters_count": 6,
+    "fee_records_count": 3000,
+    "ledger_entries_count": 52000,
+    "seed": 20261114,
+    "created_at": "2026-11-14T16:32:41+01:00"
+}

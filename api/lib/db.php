@@ -21,10 +21,10 @@ function get_db_config(?string $overrideDbName = null): array {
         $dbCfg['name'] = $overrideDbName;
     } elseif (getenv('TUITION_DB')) {
         $dbCfg['name'] = getenv('TUITION_DB');
-    } elseif (isset($_SERVER['HTTP_X_TUITION_TEST_DB']) && $_SERVER['HTTP_X_TUITION_TEST_DB'] === 'tuition_test') {
+    } elseif (isset($_SERVER['HTTP_X_TUITION_TEST_DB']) && in_array($_SERVER['HTTP_X_TUITION_TEST_DB'], ['tuition_test', 'tuition_perf'], true)) {
         $remote = $_SERVER['REMOTE_ADDR'] ?? '';
         if (in_array($remote, ['127.0.0.1', '::1', 'localhost'], true)) {
-            $dbCfg['name'] = 'tuition_test';
+            $dbCfg['name'] = $_SERVER['HTTP_X_TUITION_TEST_DB'];
         }
     }
     return $dbCfg;

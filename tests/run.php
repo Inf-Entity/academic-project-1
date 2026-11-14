@@ -4510,6 +4510,46 @@ it("Nạp lại schema.sql, seed.sql, và seed_users.php hai lần liên tiếp 
 );
 
 // ----------------------------------------------------------------------------
+// 33. CÁC MODULE KIỂM THỬ CHỨC NĂNG (PART 1: FUNCTIONAL TESTS FT-001 ONWARD)
+// ----------------------------------------------------------------------------
+require_once __DIR__ . '/functional/bootstrap.php';
+$ftClient = new ApiTestClient();
+$ftModules = [
+    '01_rates.php'            => 'run_ft_rates',
+    '02_fee_calculation.php'  => 'run_ft_fee_calculation',
+    '03_exemptions.php'       => 'run_ft_exemptions',
+    '04_payments.php'         => 'run_ft_payments',
+    '05_reversals.php'        => 'run_ft_reversals',
+    '06_refunds.php'          => 'run_ft_refunds',
+    '07_transfers.php'        => 'run_ft_transfers',
+    '08_students.php'         => 'run_ft_students',
+    '09_semesters.php'        => 'run_ft_semesters',
+    '10_history.php'          => 'run_ft_history',
+    '11_reports.php'          => 'run_ft_reports',
+    '12_receipts.php'         => 'run_ft_receipts',
+    '13_bills.php'            => 'run_ft_bills',
+    '14_student_account.php'  => 'run_ft_student_account',
+    '15_simulations.php'      => 'run_ft_simulations',
+    '16_nav_badges.php'       => 'run_ft_nav_badges',
+    '17_statistics.php'       => 'run_ft_statistics',
+    '18_login.php'            => 'run_ft_login',
+    '19_logout.php'           => 'run_ft_logout',
+    '20_search.php'           => 'run_ft_search',
+    '21_validation.php'       => 'run_ft_validation',
+];
+
+foreach ($ftModules as $file => $func) {
+    require_once __DIR__ . '/functional/' . $file;
+    $func($ftClient, $pdo);
+}
+
+// Xuất kết quả kiểm thử chức năng ra docs/test-results/functional.json và functional.txt
+FunctionalTestRecorder::export(
+    dirname(__DIR__) . '/docs/test-results/functional.json',
+    dirname(__DIR__) . '/docs/test-results/functional.txt'
+);
+
+// ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ
 // ----------------------------------------------------------------------------
 echo "\n" . COLOR_BOLD . "====================================================================\n";

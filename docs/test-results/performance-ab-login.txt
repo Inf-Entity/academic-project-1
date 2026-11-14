@@ -1,0 +1,48 @@
+This is ApacheBench, Version 2.3 <$Revision: 1923142 $>
+Copyright 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
+Licensed to The Apache Software Foundation, http://www.apache.org/
+
+Benchmarking localhost (be patient)
+Completed 100 requests
+Completed 200 requests
+Finished 200 requests
+
+
+Server Software:        Apache/2.4.65
+Server Hostname:        localhost
+Server Port:            80
+
+Document Path:          /tuition-system/api/login
+Document Length:        299 bytes
+
+Concurrency Level:      20
+Time taken for tests:   1.329 seconds
+Complete requests:      200
+Failed requests:        0
+Total transferred:      274400 bytes
+Total body sent:        46000
+HTML transferred:       59800 bytes
+Requests per second:    150.53 [#/sec] (mean)
+Time per request:       132.867 [ms] (mean)
+Time per request:       6.643 [ms] (mean, across all concurrent requests)
+Transfer rate:          201.68 [Kbytes/sec] received
+                        33.81 kb/s sent
+                        235.49 kb/s total
+
+Connection Times (ms)
+              min  mean[+/-sd] median   max
+Connect:        0    0   0.4      0       2
+Processing:    34  124  56.4    113     372
+Waiting:       30  124  56.0    113     371
+Total:         34  124  56.5    113     373
+
+Percentage of the requests served within a certain time (ms)
+  50%    113
+  66%    134
+  75%    148
+  80%    161
+  90%    197
+  95%    241
+  98%    277
+  99%    365
+ 100%    373 (longest request)

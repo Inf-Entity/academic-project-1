@@ -1,0 +1,612 @@
+[
+    {
+        "id": "FT-001",
+        "module": "rates",
+        "title": "Admin thiết lập\/cập nhật định mức tín chỉ cho học kỳ",
+        "requirement": "FR-001: Quản lý định mức tín chỉ theo học kỳ",
+        "steps": "Gửi PUT \/api\/rates\/4 với price_per_credit=880000",
+        "expected": "HTTP 200\/201, ok: true và đơn giá được lưu",
+        "actual": "HTTP 200, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-002",
+        "module": "rates",
+        "title": "Bảo toàn Rate Snapshot trên hồ sơ đã tạo khi thay đổi định mức",
+        "requirement": "BR-001: Đơn giá tín chỉ được chụp (snapshot) bất biến tại thời điểm tạo hồ sơ",
+        "steps": "Cập nhật định mức học kỳ 3 lên 950.000 và kiểm tra rate_snapshot của hồ sơ #1",
+        "expected": "rate_snapshot của hồ sơ #1 không đổi",
+        "actual": "Trước: 850000, Sau: 850000",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-003",
+        "module": "rates",
+        "title": "Truy vấn danh sách định mức học phí các kỳ",
+        "requirement": "FR-002: Tra cứu bảng định mức tín chỉ",
+        "steps": "Gửi GET \/api\/rates",
+        "expected": "HTTP 200, danh sách định mức hợp lệ",
+        "actual": "HTTP 200, số lượng định mức: 4",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-004",
+        "module": "fee_calculation",
+        "title": "Tính học phí gốc: Số tín chỉ nhân đơn giá snapshot",
+        "requirement": "BR-002: gross_tuition = registered_credits * rate_snapshot",
+        "steps": "Gọi calc_gross(15, 850000)",
+        "expected": "12.750.000 VND",
+        "actual": "12750000 VND",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-005",
+        "module": "fee_calculation",
+        "title": "Tính số tiền thực nộp (Net Due): gross trừ miễn giảm, chặn dưới tại 0",
+        "requirement": "BR-003: net_due = max(0, gross_tuition - exemption_amount)",
+        "steps": "Gọi calc_net_due(12.75M, 1.275M) và calc_net_due(5M, 6M)",
+        "expected": "11.475.000 VND và 0 VND",
+        "actual": "Net1: 11475000, Net2: 0",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-006",
+        "module": "fee_calculation",
+        "title": "Quy tắc làm tròn số tiền miễn giảm phần trăm đến số nguyên VND",
+        "requirement": "BR-004: Làm tròn số tiền VND đến hàng nguyên gần nhất bằng round()",
+        "steps": "Tính miễn giảm 33.33% trên 1.000.000 VND",
+        "expected": "333.300 VND",
+        "actual": "333300 VND",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-007",
+        "module": "exemptions",
+        "title": "Áp dụng miễn giảm theo tỷ lệ phần trăm (50%)",
+        "requirement": "FR-003: Thiết lập miễn giảm học phí theo phần trăm",
+        "steps": "Gửi PUT \/api\/fee-records\/3\/exemption với type=percent, value=50",
+        "expected": "HTTP 200\/201, áp dụng miễn giảm thành công",
+        "actual": "HTTP 200, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-008",
+        "module": "exemptions",
+        "title": "Miễn giảm cố định vượt học phí gốc được chặn ở mức học phí gốc",
+        "requirement": "BR-005: Miễn giảm cố định không vượt quá gross_tuition",
+        "steps": "Gọi calc_exemption(5000000, \"fixed\", 6000000)",
+        "expected": "5.000.000 VND",
+        "actual": "5000000 VND",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-009",
+        "module": "exemptions",
+        "title": "API từ chối miễn giảm cố định vượt học phí gốc với HTTP 400",
+        "requirement": "BR-006: Xác thực nghiệp vụ miễn giảm",
+        "steps": "Gửi PUT \/api\/fee-records\/3\/exemption với value vượt gross",
+        "expected": "HTTP 400 Bad Request kèm mã lỗi VALIDATION_ERROR",
+        "actual": "HTTP 400, code: VALIDATION_ERROR",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-010",
+        "module": "payments",
+        "title": "Admin ghi nhận thanh toán học phí thành công bằng Tiền mặt",
+        "requirement": "FR-004: Thu học phí trực tiếp tại quầy bằng tiền mặt",
+        "steps": "Gửi POST \/api\/fee-records\/2\/payments với 1.000.000 VND tiền mặt",
+        "expected": "HTTP 201 Created, tạo thành công dòng sổ cái và số biên lai",
+        "actual": "HTTP 201, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-011",
+        "module": "payments",
+        "title": "Chặn nộp thừa: từ chối số tiền thanh toán vượt quá số nợ còn lại với HTTP 422",
+        "requirement": "BR-007: Không cho phép nộp vượt quá net_due (chống nộp thừa trực tiếp)",
+        "steps": "Gửi POST \/api\/fee-records\/2\/payments với số tiền 999.999.999 VND",
+        "expected": "HTTP 422 Unprocessable Entity kèm mã OVERPAYMENT_REJECTED",
+        "actual": "HTTP 422, code: OVERPAYMENT_REJECTED",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-012",
+        "module": "payments",
+        "title": "Chuyển đổi trạng thái thanh toán chuẩn xác tại các ngưỡng",
+        "requirement": "BR-008: Chuyển đổi trạng thái công nợ theo công thức xác định",
+        "steps": "Kiểm tra derive_payment_status tại 0 VND, 5.000.000 VND và 10.000.000 VND",
+        "expected": "Unpaid -> Partially Paid -> Fully Paid",
+        "actual": "Unpaid -> Partially Paid -> Fully Paid",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-013",
+        "module": "reversals",
+        "title": "Admin thực hiện bút toán đảo mục cho giao dịch nộp tiền hợp lệ",
+        "requirement": "FR-005: Đảo mục giao dịch nộp tiền sai sót",
+        "steps": "Gửi POST \/api\/ledger\/27\/reversal kèm lý do và request_id",
+        "expected": "HTTP 200\/201, tạo thành công dòng reversal liên kết reverses_entry_id",
+        "actual": "HTTP 201, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-014",
+        "module": "reversals",
+        "title": "Từ chối đảo mục lần thứ 2 trên cùng một giao dịch với HTTP 409 Conflict",
+        "requirement": "BR-009: Mỗi giao dịch chỉ được đảo mục tối đa 1 lần duy nhất",
+        "steps": "Gửi lại POST \/api\/ledger\/27\/reversal với request_id mới",
+        "expected": "HTTP 409 Conflict",
+        "actual": "HTTP 409, error: Giao dịch thanh toán này đã được đảo mục trước đó. Không thể đảo mục lần 2.",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-015",
+        "module": "reversals",
+        "title": "Từ chối đảo mục một bút toán đảo mục (reversal of reversal)",
+        "requirement": "BR-010: Không cho phép đảo mục một bút toán đảo mục",
+        "steps": "Gửi POST \/api\/ledger\/28\/reversal",
+        "expected": "HTTP 400\/409\/422 Rejection",
+        "actual": "HTTP 422",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-016",
+        "module": "refunds",
+        "title": "Tạo yêu cầu hoàn trả số tiền nộp thừa thành công",
+        "requirement": "FR-006: Lập yêu cầu hoàn tiền cho sinh viên nộp thừa",
+        "steps": "Gửi POST \/api\/fee-records\/1\/refunds với số tiền 500.000 VND",
+        "expected": "HTTP 201 Created và trạng thái pending",
+        "actual": "HTTP 201, refundId: 6",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-017",
+        "module": "refunds",
+        "title": "Maker-Checker: Người tạo không thể tự duyệt hoàn tất yêu cầu hoàn tiền",
+        "requirement": "BR-011: Nguyên tắc kiểm soát kép Maker-Checker cho quy trình hoàn tiền",
+        "steps": "Gửi POST \/api\/refunds\/6\/complete bằng chính tài khoản tạo (admin)",
+        "expected": "HTTP 403 Forbidden kèm mã MAKER_CHECKER_VIOLATION",
+        "actual": "HTTP 403, code: MAKER_CHECKER_VIOLATION",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-018",
+        "module": "refunds",
+        "title": "Người có thẩm quyền khác duyệt hoàn tất yêu cầu hoàn tiền",
+        "requirement": "FR-007: Phê duyệt hoàn tất yêu cầu hoàn tiền",
+        "steps": "Gửi POST \/api\/refunds\/6\/complete sau khi người tạo là user khác",
+        "expected": "HTTP 200 OK và trạng thái chuyển sang completed",
+        "actual": "HTTP 200, status: completed",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-019",
+        "module": "transfers",
+        "title": "Chuyển số tiền nộp thừa sang học kỳ khác của cùng sinh viên",
+        "requirement": "FR-008: Chuyển tiền thừa giữa các học kỳ",
+        "steps": "Gửi POST \/api\/fee-records\/1\/transfers sang hồ sơ #23 với 500.000 VND",
+        "expected": "HTTP 200\/201, tạo cặp bút toán transfer_out và transfer_in",
+        "actual": "HTTP 201, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-020",
+        "module": "transfers",
+        "title": "Từ chối chuyển tiền khi số tiền chuyển vượt quá số nộp thừa khả dụng",
+        "requirement": "BR-012: Số tiền chuyển không vượt quá available overpaid excess",
+        "steps": "Gửi yêu cầu chuyển 999.999.999 VND từ hồ sơ #1",
+        "expected": "HTTP 400 hoặc 422 Rejection",
+        "actual": "HTTP 422",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-021",
+        "module": "transfers",
+        "title": "Từ chối chuyển tiền giữa hai hồ sơ thuộc hai sinh viên khác nhau",
+        "requirement": "BR-013: Chỉ được chuyển tiền giữa các học kỳ của cùng một sinh viên",
+        "steps": "Gửi chuyển tiền từ hồ sơ #1 (SV1) sang hồ sơ #2 (SV2)",
+        "expected": "HTTP 422 Unprocessable Entity kèm mã DIFFERENT_STUDENTS",
+        "actual": "HTTP 422, code: DIFFERENT_STUDENTS",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-022",
+        "module": "students",
+        "title": "Thêm mới hồ sơ sinh viên với mã sinh viên duy nhất và lớp học",
+        "requirement": "FR-009: Quản lý danh mục sinh viên",
+        "steps": "Gửi POST \/api\/students với mã SVTEST317, họ tên 'Nguyễn Văn Kiểm Thử', lớp 'CNTT2026'",
+        "expected": "HTTP 201 Created và trả về thông tin sinh viên mới",
+        "actual": "HTTP 201, id: 25",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-023",
+        "module": "students",
+        "title": "Ràng buộc toàn vẹn: Chặn xóa sinh viên đã có dữ liệu học phí hoặc tài chính",
+        "requirement": "BR-014: Ràng buộc ON DELETE RESTRICT bảo vệ dữ liệu tài chính sinh viên",
+        "steps": "Gửi DELETE \/api\/students\/1 (SV001 đã có hồ sơ học phí)",
+        "expected": "HTTP 409 Conflict kèm thông điệp giải thích",
+        "actual": "HTTP 409, error: Không thể xóa sinh viên đã có dữ liệu học phí.",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-024",
+        "module": "students",
+        "title": "Xóa thành công sinh viên chưa có phát sinh dữ liệu học phí",
+        "requirement": "FR-010: Xóa hồ sơ sinh viên khi chưa phát sinh giao dịch",
+        "steps": "Gửi DELETE \/api\/students\/25",
+        "expected": "HTTP 200 OK",
+        "actual": "HTTP 200, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-025",
+        "module": "semesters",
+        "title": "Truy vấn danh sách học kỳ và trạng thái mở\/đóng",
+        "requirement": "FR-011: Quản lý danh mục học kỳ niên khóa",
+        "steps": "Gửi GET \/api\/semesters",
+        "expected": "HTTP 200 và danh sách chứa ít nhất 4 học kỳ",
+        "actual": "HTTP 200, count: 4",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-026",
+        "module": "semesters",
+        "title": "Chặn sinh viên đăng ký học phần trên học kỳ đã đóng đăng ký (is_closed = 1)",
+        "requirement": "BR-015: Không cho phép sinh viên đăng ký học phần trên học kỳ có trạng thái đóng",
+        "steps": "Sinh viên gửi POST \/api\/student\/registrations vào học kỳ #1 đã đóng",
+        "expected": "HTTP 422 Unprocessable Entity kèm mã REGISTRATION_CLOSED",
+        "actual": "HTTP 422, code: REGISTRATION_CLOSED",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-027",
+        "module": "semesters",
+        "title": "Endpoint học kỳ của sinh viên chỉ hiển thị các học kỳ đang mở",
+        "requirement": "FR-012: Phân quyền xem học kỳ cho sinh viên",
+        "steps": "Sinh viên gọi GET \/api\/student\/semesters",
+        "expected": "Tất cả học kỳ trả về đều có is_closed = 0\/false",
+        "actual": "Số học kỳ hiển thị: 1, allOpen: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-028",
+        "module": "history",
+        "title": "Truy vấn toàn bộ lịch sử giao dịch sổ cái hệ thống",
+        "requirement": "FR-013: Xem lịch sử giao dịch tài chính",
+        "steps": "Gửi GET \/api\/history không truyền bộ lọc",
+        "expected": "HTTP 200 và danh sách bản ghi giao dịch kèm số biên lai",
+        "actual": "HTTP 200, count: 32",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-029",
+        "module": "history",
+        "title": "Lọc lịch sử giao dịch theo mã sinh viên và học kỳ",
+        "requirement": "FR-014: Bộ lọc tìm kiếm lịch sử thu học phí",
+        "steps": "Gửi GET \/api\/history?q=SV001&semester=3",
+        "expected": "Tất cả bản ghi khớp đúng SV001 và học kỳ 3",
+        "actual": "Số bản ghi: 4, allMatch: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-030",
+        "module": "history",
+        "title": "Xác thực khoảng thời gian: Từ chối khi đến ngày nhỏ hơn từ ngày",
+        "requirement": "BR-016: Ràng buộc to_date >= from_date trên bộ lọc ngày",
+        "steps": "Gửi GET \/api\/history?from=2026-12-31&to=2026-01-01",
+        "expected": "HTTP 400 Bad Request kèm thông báo lỗi trường to",
+        "actual": "HTTP 400, field to: Đến ngày không được nhỏ hơn từ ngày.",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-031",
+        "module": "reports",
+        "title": "Phương trình đối soát tài chính cân bằng tuyệt đối: receivable = collected + outstanding",
+        "requirement": "BR-017: Phương trình bảo toàn tài chính trong báo cáo tổng quan",
+        "steps": "Gửi GET \/api\/reports\/summary?semester=ALL",
+        "expected": "receivable (204201000) = collected (150120999) + outstanding (54080001)",
+        "actual": "Thực tế: 204201000 = 150120999 + 54080001 (reconciles: true)",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-032",
+        "module": "reports",
+        "title": "Khoản nộp thừa được phân loại riêng biệt, tổng 3 trạng thái + overpaid = tổng hồ sơ",
+        "requirement": "BR-018: Phân tách riêng biệt hồ sơ nộp thừa trong bảng tổng hợp",
+        "steps": "Kiểm tra unpaid + partial + paid + overpaid so với total_records",
+        "expected": "4 + 3 + 13 + 3 = 23",
+        "actual": "Tổng tính toán: 23 = 23",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-033",
+        "module": "reports",
+        "title": "Đối soát tài chính từng học kỳ độc lập cân bằng tuyệt đối",
+        "requirement": "FR-015: Báo cáo tài chính chi tiết theo từng học kỳ",
+        "steps": "Gửi GET \/api\/reports\/summary?semester=3",
+        "expected": "Kỳ 3: receivable (59925000) = collected (34324999) + outstanding (25600001)",
+        "actual": "Thực tế: 59925000 = 34324999 + 25600001",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-034",
+        "module": "receipts",
+        "title": "Số biên lai thu tiền tuân thủ chính xác định dạng chuẩn PT-YYYYMMDD-NNNN",
+        "requirement": "BR-019: Quy chuẩn định danh biên lai tài chính PT-YYYYMMDD-NNNN",
+        "steps": "Kiểm tra định dạng receipt_no trong bảng ledger_entries",
+        "expected": "Khớp biểu thức chính quy ^PT-\\d{8}-\\d{4}$",
+        "actual": "Số biên lai mẫu: PT-20260901-0001",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-035",
+        "module": "receipts",
+        "title": "Bộ đếm biên lai duy trì tuần tự không khoảng cách (gapless) theo ngày",
+        "requirement": "BR-020: Đánh số thứ tự biên lai tuần tự theo ngày trong receipt_counters",
+        "steps": "Kiểm tra bảng receipt_counters",
+        "expected": "Bảng tồn tại bản ghi đếm theo ngày với last_no >= 1",
+        "actual": "Số ngày đã phát hành biên lai: 22",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-036",
+        "module": "receipts",
+        "title": "Sinh viên truy vấn biên lai và công nợ của chính mình thành công",
+        "requirement": "FR-016: Tra cứu biên lai học phí dành cho sinh viên",
+        "steps": "Sinh viên sv001 gọi GET \/api\/student\/debts",
+        "expected": "HTTP 200 OK",
+        "actual": "HTTP 200",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-037",
+        "module": "bills",
+        "title": "Mã hóa đơn điện tử tuân thủ quy chuẩn định dạng HD-YYYYMMDD-NNNN",
+        "requirement": "BR-021: Quy chuẩn định danh hóa đơn điện tử sinh viên HD-YYYYMMDD-NNNN",
+        "steps": "Kiểm tra định dạng bill_no trong bảng bills",
+        "expected": "Khớp biểu thức chính quy ^HD-\\d{8}-\\d{4}$",
+        "actual": "Số hóa đơn thực tế: HD-20261205-0001",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-038",
+        "module": "bills",
+        "title": "Truy vấn chi tiết hóa đơn dạng JSON qua GET \/api\/student\/bills\/{id}",
+        "requirement": "FR-017: Xem chi tiết hóa đơn học phí trực tuyến",
+        "steps": "Sinh viên sv018 gọi GET \/api\/student\/bills\/15",
+        "expected": "HTTP 200 OK kèm dữ liệu snapshot hóa đơn",
+        "actual": "HTTP 200, bill_no: HD-20261205-0001",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-039",
+        "module": "bills",
+        "title": "Tải hóa đơn dạng tài liệu HTML độc lập, an toàn và không chứa thẻ <script>",
+        "requirement": "FR-018: Tải file hóa đơn điện tử đính kèm để lưu trữ hoặc in",
+        "steps": "Sinh viên sv018 gọi GET \/api\/student\/bills\/15\/download",
+        "expected": "HTTP 200, Content-Disposition: attachment, HTML sạch không script",
+        "actual": "HTTP 200, noScripts: true, hasHeader: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-040",
+        "module": "bills",
+        "title": "Cô lập dữ liệu IDOR: Sinh viên khác không thể xem hóa đơn của người khác (HTTP 404)",
+        "requirement": "BR-022: Phân quyền dữ liệu độc lập giữa các tài khoản sinh viên",
+        "steps": "Sinh viên sv002 gọi GET \/api\/student\/bills\/15 (thuộc về sv018)",
+        "expected": "HTTP 404 Not Found (không lộ sự tồn tại)",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-041",
+        "module": "student_account",
+        "title": "Sinh viên đăng nhập thành công với vai trò student",
+        "requirement": "FR-019: Đăng nhập phân hệ sinh viên",
+        "steps": "Gửi POST \/api\/login với sv001 \/ Student@001",
+        "expected": "HTTP 200, role = student",
+        "actual": "HTTP 200, role: student",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-042",
+        "module": "student_account",
+        "title": "Bắt buộc đổi mật khẩu lần đầu: Chặn mọi thao tác ngoại trừ đổi mật khẩu",
+        "requirement": "BR-023: Khóa chức năng sinh viên khi cờ must_change_password = 1",
+        "steps": "Đăng nhập sv023 và gọi GET \/api\/student\/debts",
+        "expected": "HTTP 403 Forbidden kèm mã PASSWORD_CHANGE_REQUIRED",
+        "actual": "HTTP 403, code: PASSWORD_CHANGE_REQUIRED",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-043",
+        "module": "student_account",
+        "title": "Đổi mật khẩu thành công xóa bỏ cờ must_change_password và phục hồi quyền truy cập",
+        "requirement": "FR-020: Đổi mật khẩu tài khoản sinh viên",
+        "steps": "Gửi POST \/api\/student\/password đổi mật khẩu mới",
+        "expected": "HTTP 200 OK và sau đó truy cập được \/api\/student\/debts",
+        "actual": "HTTP đổi: 200, HTTP debts sau đổi: 200",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-044",
+        "module": "simulations",
+        "title": "Khởi tạo phiên thanh toán Mã QR mô phỏng thành công với payload chuẩn",
+        "requirement": "FR-021: Tạo phiên thanh toán mã QR sinh viên",
+        "steps": "Gửi POST \/api\/student\/fee-records\/2\/payment-sessions với 500.000 VND",
+        "expected": "HTTP 201 Created kèm session_id và chuỗi QR TUITION|SESSION=...",
+        "actual": "HTTP 201, session_id: 1",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-045",
+        "module": "simulations",
+        "title": "Mô phỏng thanh toán QR thành công ghi sổ cái và phát hành hóa đơn điện tử",
+        "requirement": "FR-022: Mô phỏng xác nhận thanh toán QR tức thời",
+        "steps": "Gửi POST \/api\/student\/payment-sessions\/1\/simulate-confirm",
+        "expected": "HTTP 200\/201, trạng thái phiên chuyển sang COMPLETED",
+        "actual": "HTTP 200, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-046",
+        "module": "simulations",
+        "title": "Mô phỏng thanh toán thẻ Visa\/Mastercard: Từ chối thẻ không hợp lệ với HTTP 422",
+        "requirement": "FR-023: Xử lý phản hồi từ chối thanh toán thẻ mô phỏng",
+        "steps": "Gửi thanh toán thẻ với số thẻ test từ chối (5555...4444)",
+        "expected": "HTTP 422 Unprocessable Entity kèm mã CARD_DECLINED",
+        "actual": "HTTP 422, code: CARD_DECLINED",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-047",
+        "module": "nav_badges",
+        "title": "Truy vấn số lượng huy hiệu thông báo điều hướng hệ thống qua GET \/api\/nav\/badges",
+        "requirement": "FR-024: Hiển thị huy hiệu số lượng công việc cần xử lý",
+        "steps": "Gửi GET \/api\/nav\/badges",
+        "expected": "HTTP 200 kèm các chỉ số đếm số nguyên không âm {refunds, new_transactions, pending_profiles, overpaid_profiles}",
+        "actual": "HTTP 200, data: {\"refunds\":1,\"new_transactions\":7,\"pending_profiles\":1,\"overpaid_profiles\":2}",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-048",
+        "module": "nav_badges",
+        "title": "Ghi nhận trạng thái đã xem của người dùng đối với mục điều hướng (nav_key=history)",
+        "requirement": "FR-025: Đánh dấu đã xem thông báo điều hướng",
+        "steps": "Gửi POST \/api\/nav\/seen với nav_key=history và request_id",
+        "expected": "HTTP 200 Success kèm last_seen_entry_id",
+        "actual": "HTTP 200, ok: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-049",
+        "module": "statistics",
+        "title": "3 cột số tiền (Tổng phải thu, Đã thu, Còn nợ) trả về số nguyên VND hợp lệ (không null)",
+        "requirement": "FR-026: Bảng thống kê tài chính trực quan với số tiền định dạng chuẩn",
+        "steps": "Gửi GET \/api\/reports\/summary?semester=ALL",
+        "expected": "receivable, collected, outstanding đều là số nguyên VND >= 0",
+        "actual": "rec: 204201000, col: 150620999, out: 53580001",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-050",
+        "module": "statistics",
+        "title": "Số tiền trên bảng thống kê thỏa mãn phương trình cân đối thu chi",
+        "requirement": "BR-024: Đối soát tài chính trên bảng điều khiển quản trị",
+        "steps": "Kiểm tra: receivable == collected + outstanding",
+        "expected": "204201000 == 150620999 + 53580001",
+        "actual": "Kết quả: Cân bằng tuyệt đối",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-051",
+        "module": "login",
+        "title": "Đăng nhập quản trị viên thành công nhận CSRF Token và vai trò admin",
+        "requirement": "FR-027: Xác thực tài khoản quản trị viên",
+        "steps": "Gửi POST \/api\/login với admin \/ Admin@123",
+        "expected": "HTTP 200 OK, role = admin, có csrf_token",
+        "actual": "HTTP 200, role: admin",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-052",
+        "module": "login",
+        "title": "Đăng nhập sinh viên thành công nhận vai trò student và student_id",
+        "requirement": "FR-028: Xác thực tài khoản sinh viên",
+        "steps": "Gửi POST \/api\/login với sv001 \/ Student@001",
+        "expected": "HTTP 200 OK, role = student",
+        "actual": "HTTP 200, role: student",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-053",
+        "module": "login",
+        "title": "Chống lộ danh tính (User Enumeration): Tên không tồn tại và sai mật khẩu trả về phản hồi đồng nhất",
+        "requirement": "BR-025: Bảo mật thông báo đăng nhập chống liệt kê tài khoản",
+        "steps": "So sánh kết quả khi sai mật khẩu vs khi tên đăng nhập không tồn tại",
+        "expected": "Cả hai đều nhận HTTP 401 với thông điệp: \"Sai tên đăng nhập hoặc mật khẩu.\"",
+        "actual": "WrongPass: 401, NonExist: 401, sameMsg: true",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-054",
+        "module": "logout",
+        "title": "Đăng xuất tiêu chuẩn hủy phiên an toàn và yêu cầu CSRF Token",
+        "requirement": "FR-029: Đăng xuất người dùng khỏi hệ thống",
+        "steps": "Đăng nhập admin, gọi POST \/api\/logout, sau đó gọi GET \/api\/me",
+        "expected": "Logout trả về HTTP 200, GET \/api\/me trả về HTTP 401 Unauthorized",
+        "actual": "HTTP logout: 200, HTTP me sau logout: 401",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-055",
+        "module": "logout",
+        "title": "Cơ chế Logout Beacon hủy phiên làm việc ngay khi đóng toàn bộ tab trình duyệt",
+        "requirement": "FR-030: Đăng xuất tự động khi đóng tab trình duyệt qua beacon",
+        "steps": "Lấy logout_token từ GET \/api\/me, gửi POST \/api\/logout-beacon, sau đó kiểm tra \/api\/me",
+        "expected": "Beacon trả về HTTP 204 No Content, phiên bị hủy ngay lập tức (GET \/api\/me nhận 401)",
+        "actual": "HTTP beacon: 204, HTTP me: 401",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-056",
+        "module": "search",
+        "title": "Tìm kiếm sinh viên không phân biệt dấu tiếng Việt (có dấu và không dấu ra kết quả đồng nhất)",
+        "requirement": "FR-031: Tìm kiếm sinh viên theo họ tên chuẩn Unicode NFC",
+        "steps": "So sánh kết quả tìm kiếm với từ khóa \"nguyen\" và \"Nguyễn\"",
+        "expected": "Cả hai đều trả về cùng số lượng bản ghi (count: 5)",
+        "actual": "Số lượng: nguyen (5) vs Nguyễn (5)",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-057",
+        "module": "search",
+        "title": "Giới hạn độ dài từ khóa: Hỗ trợ chính xác 100 ký tự, từ chối khi vượt quá 100 ký tự",
+        "requirement": "BR-026: Giới hạn độ dài chuỗi tìm kiếm tối đa 100 ký tự",
+        "steps": "Thử tìm kiếm với từ khóa đúng 100 ký tự (HTTP 200) và 101 ký tự (HTTP 400)",
+        "expected": "100 ký tự: HTTP 200; 101 ký tự: HTTP 400 Bad Request",
+        "actual": "HTTP 100 ký tự: 200, HTTP 101 ký tự: 400",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-058",
+        "module": "search",
+        "title": "Xử lý trường hợp trùng tên: Tìm kiếm trả về cả 2 sinh viên trùng họ tên (SV014 và SV015)",
+        "requirement": "FR-032: Tra cứu sinh viên theo họ tên có trùng lặp",
+        "steps": "Tìm kiếm với từ khóa \"Long\"",
+        "expected": "Trả về cả SV014 và SV015 (cùng tên Nguyễn Hoàng Long)",
+        "actual": "Tìm thấy sinh viên: SV014, SV015",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-059",
+        "module": "validation",
+        "title": "Bộ phân tích tiền tệ chấp nhận dấu chấm, dấu phẩy, khoảng trắng và ký hiệu đ\/₫\/VND",
+        "requirement": "BR-027: Chuẩn hóa linh hoạt các định dạng tiền tệ Việt Nam",
+        "steps": "Phân tích chuỗi \"1.500.000\", \"1,500,000\", \"1500000 đ\"",
+        "expected": "Đều chuẩn hóa chính xác về số nguyên 1500000",
+        "actual": "valDot: 1500000, valComma: 1500000, valSym: 1500000",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-060",
+        "module": "validation",
+        "title": "Từ chối số tiền sai định dạng và trả về bản đồ lỗi đúng trường error.fields.amount",
+        "requirement": "FR-033: Bản đồ lỗi chi tiết theo từng trường (Field Error Map)",
+        "steps": "Gửi thanh toán với amount=\"1.5abc\"",
+        "expected": "HTTP 400 Bad Request kèm error.fields.amount",
+        "actual": "HTTP 400, field amount: Số tiền phải là số nguyên dương.",
+        "status": "PASS"
+    },
+    {
+        "id": "FT-061",
+        "module": "validation",
+        "title": "Chống gán hàng loạt (Mass Assignment): Từ chối trường JSON không nằm trong danh mục cho phép",
+        "requirement": "BR-028: Danh sách trắng trường dữ liệu (Whitelist fields validation)",
+        "steps": "Gửi POST \/api\/students kèm trường lạ malicious_injected",
+        "expected": "HTTP 400 Bad Request kèm mã INVALID_FIELDS",
+        "actual": "HTTP 400, code: INVALID_FIELDS",
+        "status": "PASS"
+    }
+]

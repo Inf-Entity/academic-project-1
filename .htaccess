@@ -16,6 +16,12 @@ Options -Indexes
     # Cho phép tests.js từ frontend nếu yêu cầu từ root
     RewriteRule ^tests/tests\.js$ tests/tests.js [L]
 
+    # Chặn truy cập trực tiếp vào các tệp PHP trong tests/ từ web
+    RewriteRule ^tests/.*\.php$ - [F,L]
+
+    # Chặn truy cập vào .git và các thư mục/tệp ẩn
+    RewriteRule ^\.git - [F,L]
+
     # Chặn truy cập trực tiếp vào các thư mục hệ thống nhạy cảm
     RewriteRule ^(api/(lib|handlers)|config|database|logs|backend/(config|models|controllers))/ - [F,L]
     RewriteRule \.(sql|log|ini|env|md)$ - [F,L]

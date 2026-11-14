@@ -1,0 +1,43 @@
+====================================================================
+ BÁO CÁO KẾT QUẢ KIỂM THỬ HIỆU NĂNG & ĐỒNG THỜI (PERFORMANCE REPORT)
+ Thời gian thực hiện: 2026-11-14 17:01:05
+ Database: tuition_perf (500 Sinh viên, 6 Học kỳ, 3,000 Hồ sơ, >50,000 Dòng sổ cái)
+====================================================================
+
+[PASS] post_login: POST /api/login
+  - Concurrency: 20, Total: 200, Failed: 0
+  - Latency: p50=113ms, p95=241ms (Mục tiêu: <500ms), p99=365ms, Max=373ms
+  - Throughput: 150.53 req/s
+
+[PASS] get_fee_record: GET /api/fee-records/{id}
+  - Concurrency: 20, Total: 1000, Failed: 0
+  - Latency: p50=24ms, p95=60ms (Mục tiêu: <300ms), p99=94ms, Max=149ms
+  - Throughput: 680.39 req/s
+
+[PASS] get_history: GET /api/history
+  - Concurrency: 5, Total: 50, Failed: 0
+  - Latency: p50=145ms, p95=177ms (Mục tiêu: <800ms), p99=205ms, Max=205ms
+  - Throughput: 29.92 req/s
+
+[PASS] get_reports_summary: GET /api/reports/summary
+  - Concurrency: 5, Total: 50, Failed: 0
+  - Latency: p50=499ms, p95=562ms (Mục tiêu: <1500ms), p99=584ms, Max=584ms
+  - Throughput: 9.59 req/s
+
+[PASS] get_nav_badges: GET /api/nav/badges
+  - Concurrency: 20, Total: 200, Failed: 0
+  - Latency: p50=17ms, p95=40ms (Mục tiêu: <300ms), p99=49ms, Max=52ms
+  - Throughput: 787.26 req/s
+
+[PASS] concurrency_payment_stress: Kiểm thử tranh chấp tương tranh khi 10 client cùng nộp tiền vượt công nợ
+  - 10 Tiến trình đồng thời: 5 thành công (201), 5 từ chối (422)
+  - Tổng tiền đã nộp thực tế: 10,000,000 VND / 10,000,000 VND
+
+--------------------------------------------------------------------
+ KẾT QUẢ TỐI ƯU HÓA TRUY VẤN (EXPLAIN & INDEX OPTIMIZATION)
+--------------------------------------------------------------------
+- Chỉ mục bổ sung: 
+  * ALTER TABLE ledger_entries ADD INDEX idx_ledger_fee_type_amount (fee_record_id, entry_type, amount);
+  * ALTER TABLE ledger_entries ADD INDEX idx_ledger_order (entry_date, created_at, id);
+- /api/reports/summary: 153.88ms -> 119.44ms (Nhanh hơn 1.29x)
+- /api/history:         424.45ms -> 237.34ms (Nhanh hơn 1.79x)

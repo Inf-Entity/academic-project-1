@@ -13,6 +13,9 @@ require_once dirname(__DIR__) . '/lib/calc.php';
 
 function handle_reports_routes(string $method, string $path): void {
     require_admin();
+    if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     $db = get_db_connection();
 
     if ($path === '/api/reports/summary' && $method === 'GET') {

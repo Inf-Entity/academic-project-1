@@ -1,0 +1,462 @@
+[
+    {
+        "id": "SEC-001",
+        "category": "authorization_matrix",
+        "title": "Khách vãng lai truy cập tài nguyên quản trị bị chặn HTTP 401",
+        "requirement": "SEC-AUTH-01: Yêu cầu xác thực phiên cho mọi tài nguyên quản trị",
+        "steps": "Gửi GET \/api\/students không kèm session cookie",
+        "expected": "HTTP 401 Unauthorized",
+        "actual": "HTTP 401",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-002",
+        "category": "authorization_matrix",
+        "title": "Khách vãng lai truy cập tài nguyên sinh viên bị chặn HTTP 401",
+        "requirement": "SEC-AUTH-02: Yêu cầu xác thực phiên cho mọi tài nguyên sinh viên",
+        "steps": "Gửi GET \/api\/student\/debts không kèm session cookie",
+        "expected": "HTTP 401 Unauthorized",
+        "actual": "HTTP 401",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-003",
+        "category": "authorization_matrix",
+        "title": "Sinh viên truy cập danh sách sinh viên quản trị bị chặn HTTP 403",
+        "requirement": "SEC-AUTH-03: Phân quyền vai trò admin ngăn chặn tài khoản sinh viên",
+        "steps": "Gửi GET \/api\/students với phiên sinh viên sv001",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-004",
+        "category": "authorization_matrix",
+        "title": "Sinh viên truy cập hàng đợi duyệt hoàn tiền bị chặn HTTP 403",
+        "requirement": "SEC-AUTH-04: Ngăn chặn truy cập hàng đợi hoàn tiền quản trị",
+        "steps": "Gửi GET \/api\/refunds với phiên sinh viên sv001",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-005",
+        "category": "authorization_matrix",
+        "title": "Sinh viên truy cập báo cáo tài chính toàn trường bị chặn HTTP 403",
+        "requirement": "SEC-AUTH-05: Ngăn chặn sinh viên xem dữ liệu báo cáo tài chính",
+        "steps": "Gửi GET \/api\/reports\/summary với phiên sinh viên sv001",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-006",
+        "category": "authorization_matrix",
+        "title": "Quản trị viên gọi endpoint cổng sinh viên bị chặn HTTP 403",
+        "requirement": "SEC-AUTH-06: Endpoint sinh viên yêu cầu vai trò student",
+        "steps": "Gửi GET \/api\/student\/debts với phiên admin",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-007",
+        "category": "authorization_matrix",
+        "title": "Quản trị viên khởi tạo phiên thanh toán sinh viên bị chặn HTTP 403",
+        "requirement": "SEC-AUTH-07: Khởi tạo phiên thanh toán chỉ dành cho sinh viên",
+        "steps": "Gửi POST \/api\/student\/fee-records\/1\/payment-sessions với phiên admin",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-008",
+        "category": "idor",
+        "title": "Sinh viên A xem chi tiết hồ sơ học phí của Sinh viên B trả về HTTP 404",
+        "requirement": "SEC-IDOR-01: Cô lập hoàn toàn hồ sơ công nợ, không tiết lộ sự tồn tại của ID đối tượng",
+        "steps": "SV001 gửi GET \/api\/student\/fee-records\/2 (hồ sơ của SV002)",
+        "expected": "HTTP 404 Not Found",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-009",
+        "category": "idor",
+        "title": "Sinh viên A khởi tạo thanh toán cho hồ sơ của Sinh viên B trả về HTTP 404",
+        "requirement": "SEC-IDOR-02: Chặn khởi tạo thanh toán trên hồ sơ không thuộc sở hữu",
+        "steps": "SV001 gửi POST \/api\/student\/fee-records\/2\/payment-sessions",
+        "expected": "HTTP 404 Not Found",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-010",
+        "category": "idor",
+        "title": "Sinh viên A tra cứu JSON hóa đơn của Sinh viên B trả về HTTP 404",
+        "requirement": "SEC-IDOR-03: Bảo vệ hóa đơn điện tử khỏi truy vấn IDOR",
+        "steps": "SV001 gửi GET \/api\/student\/bills\/3 (hóa đơn của SV002)",
+        "expected": "HTTP 404 Not Found",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-011",
+        "category": "idor",
+        "title": "Sinh viên A tải tài liệu HTML hóa đơn của Sinh viên B trả về HTTP 404",
+        "requirement": "SEC-IDOR-04: Bảo vệ tập tin HTML hóa đơn khỏi truy vấn IDOR",
+        "steps": "SV001 gửi GET \/api\/student\/bills\/3\/download",
+        "expected": "HTTP 404 Not Found",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-012",
+        "category": "idor",
+        "title": "Gửi trường student_id trong payload sinh viên bị từ chối HTTP 400",
+        "requirement": "SEC-IDOR-05: Chặn ghi đè mã sinh viên sở hữu từ payload client",
+        "steps": "Gửi payload chứa student_id lên \/api\/student\/fee-records\/1\/adjust-credits",
+        "expected": "HTTP 400 Bad Request với INVALID_FIELDS",
+        "actual": "HTTP 400, error: INVALID_FIELDS",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-013",
+        "category": "sqli",
+        "title": "Tham số tìm kiếm học sinh chứa chuỗi tiêm lệnh SQL được xử lý an toàn",
+        "requirement": "SEC-SQLI-01: Prepared Statements tham số hóa truy vấn tìm kiếm",
+        "steps": "Gửi GET \/api\/students?q=' OR '1'='1",
+        "expected": "HTTP 200 và kết quả không bị rò rỉ toàn bộ cơ sở dữ liệu",
+        "actual": "HTTP 200",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-014",
+        "category": "sqli",
+        "title": "Tham số lịch sử giao dịch chứa câu lệnh DROP TABLE không phá hủy dữ liệu",
+        "requirement": "SEC-SQLI-02: Truy vấn tham số hóa ngăn chặn thực thi đa câu lệnh (stacked queries)",
+        "steps": "Gửi GET \/api\/history?student='; DROP TABLE students; --",
+        "expected": "Bảng students nguyên vẹn và số lượng sinh viên không đổi",
+        "actual": "Số sinh viên trong DB: 24",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-015",
+        "category": "sqli",
+        "title": "Đăng nhập với tài khoản tiêm lệnh SQL bị từ chối an toàn với HTTP 401",
+        "requirement": "SEC-SQLI-03: Xác thực đăng nhập qua tham số hóa PDO",
+        "steps": "Gửi POST \/api\/login với username=admin'--",
+        "expected": "HTTP 401 Unauthorized",
+        "actual": "HTTP 401",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-016",
+        "category": "sqli",
+        "title": "Tham số học kỳ chứa biểu thức logic SQL bị từ chối với HTTP 400",
+        "requirement": "SEC-SQLI-04: Kiểm tra kiểu dữ liệu số nguyên cho tham số lọc học kỳ",
+        "steps": "Gửi GET \/api\/reports\/summary?semester=1 OR 1=1",
+        "expected": "HTTP 400 Bad Request",
+        "actual": "HTTP 400",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-017",
+        "category": "xss",
+        "title": "Nội dung chứa thẻ script được lưu trữ dưới dạng chuỗi thuần không thực thi",
+        "requirement": "SEC-XSS-01: JSON API lưu trữ dữ liệu an toàn và ngăn chặn XSS",
+        "steps": "Gửi thanh toán với ghi chú chứa <script>alert(1)<\/script>",
+        "expected": "Ghi chú lưu toàn vẹn chuỗi và API trả về JSON an toàn",
+        "actual": "Ghi chú đã lưu: <script>alert('xss')<\/script>",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-018",
+        "category": "xss",
+        "title": "Tài liệu HTML hóa đơn tải về hoàn toàn không chứa thẻ <script>",
+        "requirement": "SEC-XSS-02: Bộ tạo hóa đơn HTML độc lập mã hóa ký tự HTML an toàn",
+        "steps": "Kiểm tra mã nguồn HTML của hóa đơn tải về",
+        "expected": "Không chứa thẻ <script>",
+        "actual": "Không có thẻ <script>",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-019",
+        "category": "xss",
+        "title": "Phản hồi tìm kiếm JSON không bị phản xạ mã script độc hại (Reflected XSS)",
+        "requirement": "SEC-XSS-03: Phản hồi API chuẩn JSON application\/json",
+        "steps": "Gửi GET \/api\/students?q=<script>alert(1)<\/script>",
+        "expected": "Content-Type là application\/json và dữ liệu được mã hóa chuẩn",
+        "actual": "Content-Type: application\/json; charset=utf-8",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-020",
+        "category": "csrf",
+        "title": "Yêu cầu ghi thiếu X-CSRF-Token bị chặn với HTTP 403 Forbidden",
+        "requirement": "SEC-CSRF-01: Bắt buộc tiêu đề X-CSRF-Token trên mọi thao tác thay đổi dữ liệu",
+        "steps": "Gửi POST \/api\/students không kèm X-CSRF-Token",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-021",
+        "category": "csrf",
+        "title": "Yêu cầu ghi với X-CSRF-Token giả mạo bị chặn với HTTP 403 Forbidden",
+        "requirement": "SEC-CSRF-02: Xác thực tính hợp lệ của token CSRF qua so khớp chuỗi an toàn",
+        "steps": "Gửi POST \/api\/students với X-CSRF-Token không hợp lệ",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-022",
+        "category": "csrf",
+        "title": "Yêu cầu GET an toàn (Safe Method) không đòi hỏi CSRF token",
+        "requirement": "SEC-CSRF-03: Phương thức GET chỉ đọc không bắt buộc CSRF Token",
+        "steps": "Gửi GET \/api\/students không kèm X-CSRF-Token",
+        "expected": "HTTP 200 OK",
+        "actual": "HTTP 200",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-023",
+        "category": "session",
+        "title": "Cookie phiên làm việc TUITION_SESSID mang cờ bảo mật HttpOnly",
+        "requirement": "SEC-SESS-01: Ngăn chặn JavaScript đọc cookie phiên làm việc",
+        "steps": "Kiểm tra thuộc tính HttpOnly trên cookie phiên",
+        "expected": "Cookie được thiết lập HttpOnly",
+        "actual": "HttpOnly được cấu hình trong config session",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-024",
+        "category": "session",
+        "title": "Phiên làm việc quá hạn nhàn rỗi (idle timeout > 30 phút) tự động bị hủy",
+        "requirement": "SEC-SESS-02: Hết hạn phiên không hoạt động sau 1800 giây",
+        "steps": "Gửi yêu cầu với phiên có thời gian nhàn rỗi 2000 giây",
+        "expected": "HTTP 401 Unauthorized kèm mã SESSION_EXPIRED",
+        "actual": "HTTP 401, code: SESSION_EXPIRED",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-025",
+        "category": "session",
+        "title": "Phiên làm việc quá thời gian tồn tại tối đa (max lifetime > 8 giờ) tự động bị hủy",
+        "requirement": "SEC-SESS-03: Hết hạn tuyệt đối phiên làm việc sau 28800 giây",
+        "steps": "Gửi yêu cầu với phiên có thời gian tạo 30000 giây trước",
+        "expected": "HTTP 401 Unauthorized kèm mã SESSION_MAX_LIFETIME",
+        "actual": "HTTP 401, code: SESSION_MAX_LIFETIME",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-026",
+        "category": "brute_force",
+        "title": "Đăng nhập sai 5 lần liên tiếp kích hoạt khóa tài khoản tạm thời 15 phút",
+        "requirement": "SEC-BF-01: Khóa tài khoản sau 5 lần thất bại để ngăn chặn vét cạn mật khẩu",
+        "steps": "Thực hiện 5 lần đăng nhập sai liên tiếp vào tài khoản sv002",
+        "expected": "locked_until được thiết lập và lớn hơn thời gian hiện tại",
+        "actual": "failed_logins: 5, locked_until: 2026-11-14 23:29:47",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-027",
+        "category": "brute_force",
+        "title": "Lần đăng nhập thứ 6 vào tài khoản bị khóa bị từ chối với HTTP 409 ACCOUNT_LOCKED",
+        "requirement": "SEC-BF-02: Chặn đăng nhập với thông báo tài khoản bị khóa",
+        "steps": "Gửi đăng nhập đúng mật khẩu vào tài khoản sv002 đang bị khóa",
+        "expected": "HTTP 409 Conflict với error code ACCOUNT_LOCKED",
+        "actual": "HTTP 409, code: ACCOUNT_LOCKED",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-028",
+        "category": "user_enumeration",
+        "title": "Phản hồi đăng nhập đồng nhất giữa tài khoản không tồn tại và sai mật khẩu",
+        "requirement": "SEC-ENUM-01: Ngăn chặn thu thập danh sách tài khoản hợp lệ qua phản hồi đăng nhập",
+        "steps": "So sánh phản hồi giữa user không tồn tại và user tồn tại nhưng sai pass",
+        "expected": "Cùng mã HTTP 401 và cùng thông báo tiếng Việt \"Sai tên đăng nhập hoặc mật khẩu.\"",
+        "actual": "Status: 401 vs 401 | Msg: 'Sai tên đăng nhập hoặc mật khẩu.' vs 'Sai tên đăng nhập hoặc mật khẩu.'",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-029",
+        "category": "file_exposure",
+        "title": "Truy cập trực tiếp thư mục .git bị máy chủ chặn HTTP 403 Forbidden",
+        "requirement": "SEC-PATH-01: Chặn rò rỉ mã nguồn và lịch sử phiên bản qua .git",
+        "steps": "Gửi GET \/tuition-system\/.git\/HEAD",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-030",
+        "category": "file_exposure",
+        "title": "Truy cập trực tiếp kịch bản kiểm thử trong tests\/*.php bị chặn HTTP 403",
+        "requirement": "SEC-PATH-02: Ngăn chặn chạy trái phép test suite qua môi trường web",
+        "steps": "Gửi GET \/tuition-system\/tests\/run.php",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-031",
+        "category": "file_exposure",
+        "title": "Truy cập trực tiếp tệp cấu hình config\/config.php bị chặn HTTP 403",
+        "requirement": "SEC-PATH-03: Bảo vệ tệp cấu hình hệ thống khỏi truy cập web trực tiếp",
+        "steps": "Gửi GET \/tuition-system\/config\/config.php",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-032",
+        "category": "file_exposure",
+        "title": "Truy cập trực tiếp tệp database\/schema.sql bị chặn HTTP 403",
+        "requirement": "SEC-PATH-04: Bảo vệ mã nguồn cơ sở dữ liệu và cấu trúc bảng",
+        "steps": "Gửi GET \/tuition-system\/database\/schema.sql",
+        "expected": "HTTP 403 Forbidden",
+        "actual": "HTTP 403",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-033",
+        "category": "path_traversal",
+        "title": "Tấn công duyệt thư mục trong endpoint tải hóa đơn bị chặn an toàn",
+        "requirement": "SEC-TRAV-01: Kiểm tra định dạng tham số đường dẫn ID số nguyên",
+        "steps": "Gửi GET \/api\/student\/bills\/..\/..\/..\/..\/windows\/win.ini\/download",
+        "expected": "HTTP 404 Not Found hoặc Endpoint Not Found",
+        "actual": "HTTP 404",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-034",
+        "category": "error_disclosure",
+        "title": "Lỗi máy chủ nội bộ 500 trả về thông báo chung, không làm lộ stack trace hay cấu trúc file",
+        "requirement": "SEC-ERR-01: Bộ bắt ngoại lệ toàn cục giấu kín thông tin nhạy cảm của hệ thống",
+        "steps": "Gửi yêu cầu kích hoạt ngoại lệ thử nghiệm qua tiêu đề X-Test-Force-Exception",
+        "expected": "HTTP 500 với thông báo tiếng Việt chung và ok: false",
+        "actual": "HTTP 500, Leaks: NO",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-035",
+        "category": "input_hardening",
+        "title": "Yêu cầu chứa trường dữ liệu không nằm trong danh mục cho phép bị từ chối HTTP 400",
+        "requirement": "SEC-INPUT-01: Whitelist validation ngăn chặn lỗ hổng Mass Assignment",
+        "steps": "Gửi payload chứa role, is_admin, balance vào POST \/api\/students",
+        "expected": "HTTP 400 Bad Request với mã INVALID_FIELDS",
+        "actual": "HTTP 400, code: INVALID_FIELDS",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-036",
+        "category": "input_hardening",
+        "title": "Yêu cầu vượt quá giới hạn kích thước 64KB bị từ chối với HTTP 413 Payload Too Large",
+        "requirement": "SEC-INPUT-02: Giới hạn kích thước payload JSON tối đa 64 KB để chống DoS tài nguyên",
+        "steps": "Gửi payload JSON dung lượng 70 KB vào API",
+        "expected": "HTTP 413 Payload Too Large",
+        "actual": "HTTP 413",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-037",
+        "category": "input_hardening",
+        "title": "Số tiền âm bị từ chối xác thực đầu vào với HTTP 400 và bản đồ lỗi",
+        "requirement": "SEC-INPUT-03: Ràng buộc giá trị số tiền dương trong khoảng 1 đến 999 tỷ VND",
+        "steps": "Gửi thanh toán với amount = -500000",
+        "expected": "HTTP 400 kèm error.fields.amount",
+        "actual": "HTTP 400, field: Số tiền phải là số nguyên dương.",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-038",
+        "category": "input_hardening",
+        "title": "Số tiền vượt quá 999 tỷ bị từ chối xác thực đầu vào với HTTP 400",
+        "requirement": "SEC-INPUT-04: Ngăn chặn tràn số nguyên và sai lệch số học",
+        "steps": "Gửi thanh toán với amount = 1000000000000",
+        "expected": "HTTP 400 kèm error.fields.amount",
+        "actual": "HTTP 400, field: Số tiền phải là số nguyên dương.",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-039",
+        "category": "security_headers",
+        "title": "Tiêu đề X-Content-Type-Options: nosniff hiện diện trên mọi phản hồi API",
+        "requirement": "SEC-HDR-01: Chống MIME-sniffing trên trình duyệt client",
+        "steps": "Kiểm tra tiêu đề X-Content-Type-Options trên GET \/api\/students",
+        "expected": "Giá trị bằng nosniff",
+        "actual": "Giá trị: nosniff",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-040",
+        "category": "security_headers",
+        "title": "Tiêu đề X-Frame-Options: DENY hiện diện để chống Clickjacking",
+        "requirement": "SEC-HDR-02: Ngăn chặn nhúng giao diện vào iframe độc hại",
+        "steps": "Kiểm tra tiêu đề X-Frame-Options trên GET \/api\/students",
+        "expected": "Giá trị bằng DENY",
+        "actual": "Giá trị: DENY",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-041",
+        "category": "security_headers",
+        "title": "Tiêu đề Referrer-Policy: no-referrer bảo vệ dữ liệu đường dẫn",
+        "requirement": "SEC-HDR-03: Ngăn rò rỉ thông tin qua trường Referer của HTTP",
+        "steps": "Kiểm tra tiêu đề Referrer-Policy",
+        "expected": "Giá trị bằng no-referrer",
+        "actual": "Giá trị: no-referrer",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-042",
+        "category": "security_headers",
+        "title": "Tiêu đề Content-Security-Policy (CSP) hạn chế nguồn tài nguyên",
+        "requirement": "SEC-HDR-04: Chính sách bảo mật nội dung chặt chẽ chống XSS",
+        "steps": "Kiểm tra sự hiện diện của Content-Security-Policy",
+        "expected": "Chứa default-src 'self'",
+        "actual": "CSP: default-src 'self'; script-src 'self'; s...",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-043",
+        "category": "card_data_protection",
+        "title": "Số thẻ đầy đủ (PAN) và mã bí mật (CVV) tuyệt đối KHÔNG lưu trong cơ sở dữ liệu",
+        "requirement": "SEC-CARD-01: Tuân thủ chuẩn PCI-DSS, chỉ lưu brand và 4 số cuối (last4)",
+        "steps": "Quét toàn bộ bảng ledger_entries, payment_sessions, bills tìm số thẻ 4111... và CVV 123",
+        "expected": "0 bản ghi chứa số thẻ đầy đủ hoặc CVV",
+        "actual": "Số bản ghi chứa PAN: 0, Chứa trong Bills: KHÔNG",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-044",
+        "category": "race_conditions",
+        "title": "Hai giao dịch nộp tiền đồng thời vượt công nợ cho đúng 1 thành công (201) và 1 bị từ chối (422)",
+        "requirement": "SEC-RACE-01: Khóa bi quan FOR UPDATE bảo vệ tính toàn vẹn công nợ",
+        "steps": "Gửi 2 yêu cầu nộp tiền song song vượt công nợ còn lại",
+        "expected": "Đúng 1 yêu cầu nhận HTTP 201 và 1 yêu cầu nhận HTTP 422",
+        "actual": "Kết quả HTTP: 201, 422",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-045",
+        "category": "replay_prevention",
+        "title": "Phát lại yêu cầu thanh toán cùng request_id trả về HTTP 200 mà không nhân bản dữ liệu sổ cái",
+        "requirement": "SEC-REPLAY-01: Tính bất biến (Idempotency) dựa trên khóa phân biệt request_id",
+        "steps": "Gửi 2 yêu cầu nộp tiền liên tiếp với cùng request_id",
+        "expected": "Lần 1 HTTP 201, Lần 2 HTTP 200, và chính xác đúng 1 dòng trong cơ sở dữ liệu",
+        "actual": "Lần 1: HTTP 201, Lần 2: HTTP 200, Số dòng DB: 1",
+        "status": "PASS"
+    },
+    {
+        "id": "SEC-046",
+        "category": "replay_prevention",
+        "title": "Phát lại xác nhận thanh toán trên phiên đã hoàn tất bị từ chối với HTTP 409 ALREADY_CONFIRMED",
+        "requirement": "SEC-REPLAY-02: Chặn phát lại xác thực thanh toán trên phiên đã đóng",
+        "steps": "Gọi simulate-confirm lần thứ hai trên cùng phiên đã hoàn thành",
+        "expected": "HTTP 409 Conflict với error code ALREADY_CONFIRMED",
+        "actual": "HTTP 409, code: ALREADY_CONFIRMED",
+        "status": "PASS"
+    }
+]

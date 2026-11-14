@@ -12,4 +12,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_system`.* TO 'tuition_user'@'12
 GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_test`.* TO 'tuition_user'@'localhost';
 GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_test`.* TO 'tuition_user'@'127.0.0.1';
 
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_perf`.* TO 'tuition_user'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON `tuition_perf`.* TO 'tuition_user'@'127.0.0.1';
+
 FLUSH PRIVILEGES;

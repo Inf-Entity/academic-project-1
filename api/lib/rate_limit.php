@@ -8,9 +8,10 @@ declare(strict_types=1);
 require_once __DIR__ . '/response.php';
 
 function check_rate_limit(string $action = 'default', int $maxAttempts = 30, int $windowSeconds = 60): void {
-    $isTest = (isset($_SERVER['HTTP_X_TUITION_TEST_DB']) && $_SERVER['HTTP_X_TUITION_TEST_DB'] === 'tuition_test');
+    $testDb = $_SERVER['HTTP_X_TUITION_TEST_DB'] ?? '';
+    $isTest = in_array($testDb, ['tuition_test', 'tuition_perf'], true);
     if ($isTest) {
-        $maxAttempts = 500;
+        $maxAttempts = 2000;
     }
     $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
     $cacheDir = sys_get_temp_dir() . '/tuition_rate_limits';

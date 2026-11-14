@@ -1,0 +1,240 @@
+{
+    "reports_summary": {
+        "before_ms": 153.88,
+        "after_ms": 119.44,
+        "speedup": "1.29x",
+        "explain_before": [
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "fr",
+                "type": "ALL",
+                "possible_keys": null,
+                "key": null,
+                "key_len": null,
+                "ref": null,
+                "rows": "3000",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "ex",
+                "type": "eq_ref",
+                "possible_keys": "fee_record_id",
+                "key": "fee_record_id",
+                "key_len": "4",
+                "ref": "tuition_perf.fr.id",
+                "rows": "1",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "<derived4>",
+                "type": "ref",
+                "possible_keys": "key0",
+                "key": "key0",
+                "key_len": "5",
+                "ref": "tuition_perf.fr.id",
+                "rows": "17",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "<derived5>",
+                "type": "ref",
+                "possible_keys": "key0",
+                "key": "key0",
+                "key_len": "5",
+                "ref": "tuition_perf.fr.id",
+                "rows": "2",
+                "Extra": ""
+            },
+            {
+                "id": 5,
+                "select_type": "DERIVED",
+                "table": "refund_requests",
+                "type": "ALL",
+                "possible_keys": "fk_refund_requests_fee_records",
+                "key": null,
+                "key_len": null,
+                "ref": null,
+                "rows": "1",
+                "Extra": "Using temporary; Using filesort"
+            },
+            {
+                "id": 4,
+                "select_type": "DERIVED",
+                "table": "ledger_entries",
+                "type": "index",
+                "possible_keys": "idx_ledger_fee_type_amount",
+                "key": "idx_ledger_fee_type_amount",
+                "key_len": "13",
+                "ref": null,
+                "rows": "51800",
+                "Extra": "Using index; Using temporary; Using filesort"
+            }
+        ],
+        "explain_after": [
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "fr",
+                "type": "ALL",
+                "possible_keys": null,
+                "key": null,
+                "key_len": null,
+                "ref": null,
+                "rows": "3000",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "ex",
+                "type": "eq_ref",
+                "possible_keys": "fee_record_id",
+                "key": "fee_record_id",
+                "key_len": "4",
+                "ref": "tuition_perf.fr.id",
+                "rows": "1",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "<derived4>",
+                "type": "ref",
+                "possible_keys": "key0",
+                "key": "key0",
+                "key_len": "5",
+                "ref": "tuition_perf.fr.id",
+                "rows": "17",
+                "Extra": ""
+            },
+            {
+                "id": 1,
+                "select_type": "PRIMARY",
+                "table": "<derived5>",
+                "type": "ref",
+                "possible_keys": "key0",
+                "key": "key0",
+                "key_len": "5",
+                "ref": "tuition_perf.fr.id",
+                "rows": "2",
+                "Extra": ""
+            },
+            {
+                "id": 5,
+                "select_type": "DERIVED",
+                "table": "refund_requests",
+                "type": "index",
+                "possible_keys": "fk_refund_requests_fee_records",
+                "key": "idx_refund_status_fee",
+                "key_len": "13",
+                "ref": null,
+                "rows": "1",
+                "Extra": "Using index; Using temporary; Using filesort"
+            },
+            {
+                "id": 4,
+                "select_type": "DERIVED",
+                "table": "ledger_entries",
+                "type": "index",
+                "possible_keys": "idx_ledger_fee_type_amount",
+                "key": "idx_ledger_fee_type_amount",
+                "key_len": "13",
+                "ref": null,
+                "rows": "51800",
+                "Extra": "Using index; Using temporary; Using filesort"
+            }
+        ]
+    },
+    "history": {
+        "before_ms": 424.45,
+        "after_ms": 237.34,
+        "speedup": "1.79x",
+        "explain_before": [
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "s",
+                "type": "index",
+                "possible_keys": "PRIMARY",
+                "key": "student_code",
+                "key_len": "50",
+                "ref": null,
+                "rows": "501",
+                "Extra": "Using index; Using temporary; Using filesort"
+            },
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "fr",
+                "type": "ref",
+                "possible_keys": "PRIMARY,uq_fee_student_semester",
+                "key": "uq_fee_student_semester",
+                "key_len": "8",
+                "ref": "tuition_perf.s.id",
+                "rows": "3",
+                "Extra": "Using index"
+            },
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "l",
+                "type": "ref",
+                "possible_keys": "idx_ledger_fee_type_amount",
+                "key": "idx_ledger_fee_type_amount",
+                "key_len": "4",
+                "ref": "tuition_perf.fr.id",
+                "rows": "8",
+                "Extra": ""
+            }
+        ],
+        "explain_after": [
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "s",
+                "type": "index",
+                "possible_keys": "PRIMARY",
+                "key": "student_code",
+                "key_len": "50",
+                "ref": null,
+                "rows": "501",
+                "Extra": "Using index; Using temporary; Using filesort"
+            },
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "fr",
+                "type": "ref",
+                "possible_keys": "PRIMARY,uq_fee_student_semester",
+                "key": "uq_fee_student_semester",
+                "key_len": "8",
+                "ref": "tuition_perf.s.id",
+                "rows": "3",
+                "Extra": "Using index"
+            },
+            {
+                "id": 1,
+                "select_type": "SIMPLE",
+                "table": "l",
+                "type": "ref",
+                "possible_keys": "idx_ledger_fee_type_amount",
+                "key": "idx_ledger_fee_type_amount",
+                "key_len": "4",
+                "ref": "tuition_perf.fr.id",
+                "rows": "8",
+                "Extra": ""
+            }
+        ]
+    },
+    "indexes_added": [
+        "ALTER TABLE ledger_entries ADD INDEX idx_ledger_fee_type_amount (fee_record_id, entry_type, amount);",
+        "ALTER TABLE ledger_entries ADD INDEX idx_ledger_order (entry_date, created_at, id);"
+    ]
+}

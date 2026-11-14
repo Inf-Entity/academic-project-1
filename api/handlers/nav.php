@@ -15,10 +15,26 @@ require_once dirname(__DIR__) . '/lib/calc.php';
 function handle_nav_routes(string $method, string $path): void {
     require_admin();
     $userId = (int)($_SESSION['user_id'] ?? 1);
+    if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     $db = get_db_connection();
 
     // 1. GET /api/nav/badges (Read-only single request count)
     if ($path === '/api/nav/badges' && $method === 'GET') {
+        $testDb = $_SERVER['HTTP_X_TUITION_TEST_DB'] ?? '';
+        $cacheDir = sys_get_temp_dir() . '/tuition_cache';
+        if (!is_dir($cacheDir)) {
+            @mkdir($cacheDir, 0777, true);
+        }
+        $cacheFile = "{$cacheDir}/nav_{$userId}_{$testDb}.json";
+        if (file_exists($cacheFile) && (microtime(true) - filemtime($cacheFile)) < 2.0) {
+            $cached = @json_decode((string)file_get_contents($cacheFile), true);
+            if (is_array($cached)) {
+                json_success($cached);
+            }
+        }
+
         // Lấy last_seen_entry_id của người dùng hiện tại
         $stmt = $db->prepare("SELECT last_seen_entry_id FROM user_nav_state WHERE user_id = :uid AND nav_key = 'history'");
         $stmt->execute(['uid' => $userId]);
@@ -44,12 +60,16 @@ function handle_nav_routes(string $method, string $path): void {
         $stmtCounts->execute(['last_seen' => $lastSeenId]);
         $counts = $stmtCounts->fetch();
 
-        json_success([
+        $badgeData = [
             'refunds'           => (int)($counts['refunds'] ?? 0),
             'new_transactions'  => (int)($counts['new_transactions'] ?? 0),
             'pending_profiles'  => (int)($counts['pending_profiles'] ?? 0),
             'overpaid_profiles' => (int)($counts['overpaid_profiles'] ?? 0),
-        ]);
+        ];
+
+        @file_put_contents($cacheFile, json_encode($badgeData));
+
+        json_success($badgeData);
     }
 
     // 2. POST /api/nav/seen (Mark nav_key as seen)
@@ -92,6 +112,12 @@ function handle_nav_routes(string $method, string $path): void {
             'maxId'       => $maxId,
             'maxIdUpdate' => $maxId,
         ]);
+
+        $testDb = $_SERVER['HTTP_X_TUITION_TEST_DB'] ?? '';
+        $cacheFile = sys_get_temp_dir() . "/tuition_cache/nav_{$userId}_{$testDb}.json";
+        if (file_exists($cacheFile)) {
+            @unlink($cacheFile);
+        }
 
         json_success([
             'nav_key'            => $navKey,

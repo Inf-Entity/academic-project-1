@@ -13,6 +13,9 @@ require_once dirname(__DIR__) . '/lib/calc.php';
 
 function handle_history_routes(string $method, string $path): void {
     require_admin();
+    if ($method === 'GET' && session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     $db = get_db_connection();
 
     if ($path === '/api/history' && $method === 'GET') {
@@ -74,9 +77,18 @@ function handle_history_routes(string $method, string $path): void {
             }
         }
 
+        $hasStudentFilter = ($q !== '' || $student !== '' || $name !== '');
+        $balanceSql = $hasStudentFilter
+            ? "GREATEST(0, v.net_due - (
+                SUM(CASE WHEN l.entry_type IN ('payment', 'transfer_in') THEN l.amount WHEN l.entry_type IN ('reversal', 'transfer_out') THEN -l.amount ELSE 0 END) 
+                OVER (PARTITION BY l.fee_record_id ORDER BY l.entry_date ASC, l.created_at ASC, l.id ASC)
+                - COALESCE((SELECT SUM(rf.amount) FROM refund_requests rf WHERE rf.fee_record_id = l.fee_record_id AND rf.status = 'completed' AND rf.completed_at <= l.created_at), 0)
+            )) AS remaining_balance"
+            : "v.outstanding_amount AS remaining_balance";
+
         // Truy vấn danh sách giao dịch từ ledger_entries kèm subquery tổng hợp công nợ
         $feeSub = get_fee_summary_subquery();
-        $sql = "SELECT 
+        $sql = "SELECT STRAIGHT_JOIN 
                     l.id,
                     l.fee_record_id,
                     l.entry_type AS type,
@@ -99,11 +111,7 @@ function handle_history_routes(string $method, string $path): void {
                     CONCAT('Học kỳ ', sem.term_no, ' - Năm học ', sem.academic_year_start, '-', sem.academic_year_start + 1) AS semester_label,
                     v.net_due,
                     v.total_paid,
-                    GREATEST(0, v.net_due - (
-                        SUM(CASE WHEN l.entry_type IN ('payment', 'transfer_in') THEN l.amount WHEN l.entry_type IN ('reversal', 'transfer_out') THEN -l.amount ELSE 0 END) 
-                        OVER (PARTITION BY l.fee_record_id ORDER BY l.entry_date ASC, l.created_at ASC, l.id ASC)
-                        - COALESCE((SELECT SUM(rf.amount) FROM refund_requests rf WHERE rf.fee_record_id = l.fee_record_id AND rf.status = 'completed' AND rf.completed_at <= l.created_at), 0)
-                    )) AS remaining_balance
+                    {$balanceSql}
                 FROM ledger_entries l
                 JOIN fee_records fr ON l.fee_record_id = fr.id
                 JOIN students s ON fr.student_id = s.id
@@ -179,6 +187,13 @@ function handle_history_routes(string $method, string $path): void {
         }
 
         $sql .= " ORDER BY l.entry_date DESC, l.created_at DESC, l.id DESC";
+
+        if (isset($_GET['limit']) && ($_GET['limit'] === 'all' || $_GET['limit'] === '0')) {
+            // Không giới hạn số lượng bản ghi
+        } else {
+            $limit = isset($_GET['limit']) && is_numeric($_GET['limit']) ? min(2000, max(1, (int)$_GET['limit'])) : 200;
+            $sql .= " LIMIT " . $limit;
+        }
 
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
