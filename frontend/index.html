@@ -813,6 +813,34 @@
           </div>
         </div>
 
+        <!-- Bảng danh sách hồ sơ học phí trên màn hình thanh toán -->
+        <div class="content-card" style="margin-bottom: 2rem;">
+          <div class="card-header" style="padding: 1rem 1.25rem; border-bottom: 1px solid #e5e7eb;">
+            <h3 style="margin: 0; font-size: 1.15rem;">📋 Danh sách Khoản Học phí Cần Thanh toán</h3>
+            <p class="text-muted" style="margin: 0.25rem 0 0; font-size: 0.875rem;">Chi tiết các khoản học phí và trạng thái thanh toán trực tuyến.</p>
+          </div>
+          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng danh sách hồ sơ thanh toán">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Học kỳ</th>
+                  <th scope="col" class="text-right">Số TC</th>
+                  <th scope="col" class="text-right">Học phí gốc</th>
+                  <th scope="col" class="text-right">Miễn giảm</th>
+                  <th scope="col" class="text-right">Phải nộp (Net)</th>
+                  <th scope="col" class="text-right">Đã nộp</th>
+                  <th scope="col" class="text-right">Còn nợ</th>
+                  <th scope="col" class="text-center">Trạng thái</th>
+                  <th scope="col" class="text-center">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="student-payment-records-body">
+                <!-- Nạp động bằng JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="content-card" style="max-width: 680px; margin: 0 auto;">
           <form id="student-payment-form" method="POST" action="javascript:void(0);" novalidate>
             <div class="form-error-summary" role="alert" hidden></div>

@@ -3054,6 +3054,461 @@ it("Học kỳ không có hồ sơ nào trả về số 0 cho mọi trạng thá
 $pdo->exec("DELETE FROM semesters WHERE id = {$emptySemesterId}");
 
 // ----------------------------------------------------------------------------
+// 25. KIỂM THỬ THỐNG KÊ TRẠNG THÁI THANH TOÁN (STATUS BREAKDOWN & PARAMETER VALIDATION)
+// ----------------------------------------------------------------------------
+suite_header("25. Kiểm thử Thống kê Trạng thái Thanh toán (Status Breakdown Verification)");
+
+// 1. Endpoint thống kê trả về số nguyên, không có null cho toàn hệ thống và từng học kỳ
+$statClient = new ApiTestClient();
+$statClient->login('admin', 'Admin@123');
+
+$statAllRes = $statClient->request('GET', '/reports/summary');
+$statAllData = $statAllRes['body']['data'] ?? [];
+$statAllCounts = $statAllData['status_counts'] ?? [];
+$statAllOverpaid = $statAllData['overpaid'] ?? [];
+it("Endpoint thống kê trả về số nguyên không có null cho phạm vi ALL", 
+    $statAllRes['status'] === 200
+    && is_int($statAllCounts['unpaid'] ?? null)
+    && is_int($statAllCounts['partial'] ?? null)
+    && is_int($statAllCounts['paid'] ?? null)
+    && is_int($statAllOverpaid['count'] ?? null)
+    && is_int($statAllData['total_students_with_records'] ?? null)
+    && ($statAllCounts['unpaid'] !== null)
+    && ($statAllCounts['partial'] !== null)
+    && ($statAllCounts['paid'] !== null)
+);
+
+// Từng học kỳ (1, 2, 3)
+$statSemsIntsOk = true;
+foreach ([1, 2, 3] as $sId) {
+    $semRes = $statClient->request('GET', "/reports/summary?semester={$sId}");
+    $sData = $semRes['body']['data'] ?? [];
+    $sc = $sData['status_counts'] ?? [];
+    $so = $sData['overpaid'] ?? [];
+    if ($semRes['status'] !== 200
+        || !is_int($sc['unpaid'] ?? null)
+        || !is_int($sc['partial'] ?? null)
+        || !is_int($sc['paid'] ?? null)
+        || !is_int($so['count'] ?? null)
+    ) {
+        $statSemsIntsOk = false;
+        break;
+    }
+}
+it("Endpoint thống kê trả về số nguyên không có null cho từng học kỳ riêng lẻ", $statSemsIntsOk);
+
+// 2. Tổng 3 trạng thái + nộp thừa bằng đúng tổng số hồ sơ học phí trong phạm vi (toàn trường & từng kỳ)
+$statSumAll = ($statAllCounts['unpaid'] + $statAllCounts['partial'] + $statAllCounts['paid'] + $statAllOverpaid['count']) === $statAllData['total_students_with_records'];
+$statSumSems = true;
+foreach ([1, 2, 3] as $sId) {
+    $semRes = $statClient->request('GET', "/reports/summary?semester={$sId}");
+    $sData = $semRes['body']['data'] ?? [];
+    $sum = ($sData['status_counts']['unpaid'] ?? 0) + ($sData['status_counts']['partial'] ?? 0) + ($sData['status_counts']['paid'] ?? 0) + ($sData['overpaid']['count'] ?? 0);
+    if ($sum !== ($sData['total_students_with_records'] ?? -1)) {
+        $statSumSems = false;
+        break;
+    }
+}
+it("3 trạng thái cộng nộp thừa bằng đúng tổng số hồ sơ học phí trong phạm vi", $statSumAll && $statSumSems);
+
+// 3. Học kỳ không có hồ sơ nào trả về 0 cho mọi trạng thái, không phải null
+$pdo->exec("INSERT INTO semesters (term_no, academic_year_start) VALUES (2, 2030)");
+$noRecordSemId = (int)$pdo->lastInsertId();
+$noRecRes = $statClient->request('GET', "/reports/summary?semester={$noRecordSemId}");
+$noRecData = $noRecRes['body']['data'] ?? [];
+it("Học kỳ không có hồ sơ học phí nào trả về 0 cho mọi trạng thái, không phải null", 
+    $noRecRes['status'] === 200
+    && ($noRecData['total_students_with_records'] ?? -1) === 0
+    && ($noRecData['status_counts']['unpaid'] ?? -1) === 0
+    && ($noRecData['status_counts']['partial'] ?? -1) === 0
+    && ($noRecData['status_counts']['paid'] ?? -1) === 0
+    && ($noRecData['overpaid']['count'] ?? -1) === 0
+);
+$pdo->exec("DELETE FROM semesters WHERE id = {$noRecordSemId}");
+
+// 4. Tham số semester thiếu hoặc không hợp lệ trả về kết quả xác định (default scope hoặc 400 kèm field error), không bao giờ bị 500
+$noParamRes = $statClient->request('GET', '/reports/summary');
+it("Yêu cầu không có tham số semester trả về phạm vi mặc định ALL với HTTP 200", 
+    $noParamRes['status'] === 200 
+    && ($noParamRes['body']['ok'] ?? false) === true
+    && ($noParamRes['body']['data']['total_students_with_records'] ?? 0) > 0
+);
+
+$emptyParamRes = $statClient->request('GET', '/reports/summary?semester=');
+it("Yêu cầu với tham số semester rỗng (semester=) trả về phạm vi mặc định ALL với HTTP 200", 
+    $emptyParamRes['status'] === 200 
+    && ($emptyParamRes['body']['ok'] ?? false) === true
+    && ($emptyParamRes['body']['data']['total_students_with_records'] ?? 0) > 0
+);
+
+$undefParamRes = $statClient->request('GET', '/reports/summary?semester=undefined');
+it("Yêu cầu với semester=undefined trả về HTTP 400 kèm lỗi trường semester, không bị lỗi 500", 
+    $undefParamRes['status'] === 400 
+    && ($undefParamRes['body']['ok'] ?? true) === false
+    && isset($undefParamRes['body']['error']['fields']['semester'])
+    && $undefParamRes['body']['error']['code'] === 'VALIDATION_ERROR'
+);
+
+$negParamRes = $statClient->request('GET', '/reports/summary?semester=-1');
+it("Yêu cầu với semester âm (-1) trả về HTTP 400 kèm lỗi trường semester, không bị lỗi 500", 
+    $negParamRes['status'] === 400 
+    && ($negParamRes['body']['ok'] ?? true) === false
+    && isset($negParamRes['body']['error']['fields']['semester'])
+);
+
+$strParamRes = $statClient->request('GET', '/reports/summary?semester=invalid_name');
+it("Yêu cầu với semester dạng chuỗi chữ trả về HTTP 400 kèm lỗi trường semester, không bị lỗi 500", 
+    $strParamRes['status'] === 400 
+    && ($strParamRes['body']['ok'] ?? true) === false
+    && isset($strParamRes['body']['error']['fields']['semester'])
+);
+
+// 5. Mỗi số lượng trạng thái bằng đúng kết quả SQL tính toán trực tiếp từ calc.php get_fee_summary_subquery()
+$calcSubSql = get_fee_summary_subquery();
+$sqlAll = $pdo->query("SELECT 
+    COUNT(*) AS total,
+    COUNT(CASE WHEN v.derived_status = 'Unpaid' THEN 1 END) AS unpaid,
+    COUNT(CASE WHEN v.derived_status = 'Partially Paid' THEN 1 END) AS partial,
+    COUNT(CASE WHEN v.derived_status = 'Fully Paid' THEN 1 END) AS paid,
+    COUNT(CASE WHEN v.derived_status = 'Overpaid' THEN 1 END) AS overpaid
+FROM {$calcSubSql} v")->fetch(PDO::FETCH_ASSOC);
+
+it("Mỗi số lượng trạng thái phạm vi ALL bằng đúng kết quả SQL trực tiếp từ calc.php", 
+    (int)$statAllCounts['unpaid'] === (int)$sqlAll['unpaid']
+    && (int)$statAllCounts['partial'] === (int)$sqlAll['partial']
+    && (int)$statAllCounts['paid'] === (int)$sqlAll['paid']
+    && (int)$statAllOverpaid['count'] === (int)$sqlAll['overpaid']
+    && (int)$statAllData['total_students_with_records'] === (int)$sqlAll['total']
+);
+
+$sqlSemsMatch = true;
+foreach ([1, 2, 3] as $sId) {
+    $semRes = $statClient->request('GET', "/reports/summary?semester={$sId}");
+    $sData = $semRes['body']['data'] ?? [];
+    $sc = $sData['status_counts'] ?? [];
+    $so = $sData['overpaid'] ?? [];
+    $sqlSem = $pdo->query("SELECT 
+        COUNT(*) AS total,
+        COUNT(CASE WHEN v.derived_status = 'Unpaid' THEN 1 END) AS unpaid,
+        COUNT(CASE WHEN v.derived_status = 'Partially Paid' THEN 1 END) AS partial,
+        COUNT(CASE WHEN v.derived_status = 'Fully Paid' THEN 1 END) AS paid,
+        COUNT(CASE WHEN v.derived_status = 'Overpaid' THEN 1 END) AS overpaid
+    FROM {$calcSubSql} v WHERE v.semester_id = {$sId}")->fetch(PDO::FETCH_ASSOC);
+
+    if ((int)($sc['unpaid'] ?? -1) !== (int)$sqlSem['unpaid']
+        || (int)($sc['partial'] ?? -1) !== (int)$sqlSem['partial']
+        || (int)($sc['paid'] ?? -1) !== (int)$sqlSem['paid']
+        || (int)($so['count'] ?? -1) !== (int)$sqlSem['overpaid']
+        || (int)($sData['total_students_with_records'] ?? -1) !== (int)$sqlSem['total']
+    ) {
+        $sqlSemsMatch = false;
+        break;
+    }
+}
+it("Mỗi số lượng trạng thái cho từng học kỳ riêng biệt bằng đúng kết quả SQL trực tiếp từ calc.php", $sqlSemsMatch);
+
+// 6. Tài khoản sinh viên không thể truy cập endpoint báo cáo thống kê (HTTP 403 Forbidden)
+$studentReportRes = $svClient->request('GET', '/reports/summary');
+it("Tài khoản sinh viên không thể truy cập endpoint báo cáo thống kê (HTTP 403)", 
+    $studentReportRes['status'] === 403
+);
+
+// ----------------------------------------------------------------------------
+// 26. KIỂM THỬ TRUY CẬP MENU THANH TOÁN HỌC PHÍ SINH VIÊN (ISSUE 1 VERIFICATION)
+// ----------------------------------------------------------------------------
+suite_header("26. Kiểm thử Truy cập Menu Thanh toán & Quyền Sinh viên (Issue 1 Verification)");
+
+// 1. Sinh viên sv001 (must_change_password = 0) nạp dữ liệu nợ và màn hình thanh toán thành công (HTTP 200)
+$sv001Client = new ApiTestClient();
+$sv001Login = $sv001Client->login('sv001', 'Student@001');
+it("Sinh viên sv001 đăng nhập thành công với role='student' và must_change_password=0",
+    $sv001Login['status'] === 200
+    && ($sv001Login['body']['data']['role'] ?? '') === 'student'
+    && (int)($sv001Login['body']['data']['must_change_password'] ?? -1) === 0
+);
+
+$sv001DebtsRes = $sv001Client->request('GET', '/student/debts');
+it("Sinh viên sv001 nạp dữ liệu công nợ và màn hình thanh toán thành công (HTTP 200)",
+    $sv001DebtsRes['status'] === 200
+    && ($sv001DebtsRes['body']['ok'] ?? false) === true
+    && isset($sv001DebtsRes['body']['data']['all_records'])
+);
+
+// sv001 có hồ sơ nộp thừa (#5) hiển thị đúng cảnh báo "Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo."
+$sv001Records = $sv001DebtsRes['body']['data']['all_records'] ?? [];
+$hasOverpaidRecord = false;
+$overpaidHasCorrectWarning = false;
+foreach ($sv001Records as $rec) {
+    if (!empty($rec['is_overpaid'])) {
+        $hasOverpaidRecord = true;
+        if (($rec['warning'] ?? '') === 'Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.') {
+            $overpaidHasCorrectWarning = true;
+        }
+    }
+}
+it("Hồ sơ nộp thừa của sv001 hiển thị cảnh báo quy định: 'Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.'",
+    $hasOverpaidRecord && $overpaidHasCorrectWarning
+);
+
+// 2. Sinh viên sv002 (must_change_password = 0) nạp dữ liệu nợ và màn hình thanh toán thành công (HTTP 200)
+$sv002Client = new ApiTestClient();
+$sv002Login = $sv002Client->login('sv002', 'Student@002');
+it("Sinh viên sv002 đăng nhập thành công với role='student' và must_change_password=0",
+    $sv002Login['status'] === 200
+    && ($sv002Login['body']['data']['role'] ?? '') === 'student'
+    && (int)($sv002Login['body']['data']['must_change_password'] ?? -1) === 0
+);
+
+$sv002DebtsRes = $sv002Client->request('GET', '/student/debts');
+it("Sinh viên sv002 nạp dữ liệu công nợ và màn hình thanh toán thành công (HTTP 200)",
+    $sv002DebtsRes['status'] === 200
+    && ($sv002DebtsRes['body']['ok'] ?? false) === true
+    && count($sv002DebtsRes['body']['data']['outstanding_records'] ?? []) > 0
+);
+
+// 3. sv006 có must_change_password = 1 bị chặn tại gate đổi mật khẩu với HTTP 403 PASSWORD_CHANGE_REQUIRED
+$sv006Client = new ApiTestClient();
+$sv006Login = $sv006Client->login('sv006', 'Student@006');
+it("Sinh viên sv006 đăng nhập thành công nhưng có must_change_password=1",
+    $sv006Login['status'] === 200
+    && (int)($sv006Login['body']['data']['must_change_password'] ?? 0) === 1
+);
+
+$sv006DebtsRes = $sv006Client->request('GET', '/student/debts');
+it("Sinh viên sv006 bị chặn truy cập /api/student/debts khi chưa đổi mật khẩu (HTTP 403 PASSWORD_CHANGE_REQUIRED)",
+    $sv006DebtsRes['status'] === 403
+    && ($sv006DebtsRes['body']['error']['code'] ?? '') === 'PASSWORD_CHANGE_REQUIRED'
+);
+
+// 4. Sinh viên không thể truy cập bất kỳ endpoint quản trị nào (Admin Data Isolation)
+$svAdminCheck1 = $sv001Client->request('GET', '/students');
+$svAdminCheck2 = $sv001Client->request('GET', '/refunds');
+$svAdminCheck3 = $sv001Client->request('GET', '/rates');
+$svAdminCheck4 = $sv001Client->request('GET', '/reports/summary');
+it("Sinh viên bị chặn truy cập toàn bộ dữ liệu quản trị /students, /refunds, /rates, /reports (HTTP 403)",
+    $svAdminCheck1['status'] === 403
+    && $svAdminCheck2['status'] === 403
+    && $svAdminCheck3['status'] === 403
+    && $svAdminCheck4['status'] === 403
+);
+
+// 5. Admin không thể truy cập endpoint sinh viên (Student Data Isolation)
+$adminClientForSv = new ApiTestClient();
+$adminClientForSv->login('admin', 'Admin@123');
+$adminSvCheck = $adminClientForSv->request('GET', '/student/debts');
+it("Quản trị viên (admin) gọi endpoint sinh viên /api/student/debts bị từ chối (HTTP 403)",
+    $adminSvCheck['status'] === 403
+);
+
+// ----------------------------------------------------------------------------
+// 27. KIỂM THỬ 3 CỘT SỐ TIỀN BÁO CÁO THỐNG KÊ (PHẢI THU, ĐÃ THU, CÒN NỢ)
+// ----------------------------------------------------------------------------
+suite_header("27. Kiểm thử 3 Cột Số tiền Thống kê Báo cáo (Phải thu, Đã thu, Còn nợ)");
+
+$statAmtClient = new ApiTestClient();
+$statAmtClient->login('admin', 'Admin@123');
+
+// 1. Endpoint /api/reports/summary trả về số nguyên cho receivable, collected, outstanding không có null phạm vi ALL
+$repAllAmt = $statAmtClient->request('GET', '/reports/summary');
+$allAmtData = $repAllAmt['body']['data'] ?? [];
+$allAmounts = $allAmtData['status_amounts'] ?? [];
+
+it("/api/reports/summary phạm vi ALL trả về số nguyên cho 3 cột số tiền (receivable, collected, outstanding), không có null",
+    $repAllAmt['status'] === 200
+    && is_int($allAmtData['receivable'])
+    && is_int($allAmtData['collected'])
+    && is_int($allAmtData['outstanding'])
+    && is_int($allAmounts['unpaid']['receivable'] ?? null)
+    && is_int($allAmounts['unpaid']['collected'] ?? null)
+    && is_int($allAmounts['unpaid']['outstanding'] ?? null)
+    && is_int($allAmounts['partial']['receivable'] ?? null)
+    && is_int($allAmounts['partial']['collected'] ?? null)
+    && is_int($allAmounts['partial']['outstanding'] ?? null)
+    && is_int($allAmounts['paid']['receivable'] ?? null)
+    && is_int($allAmounts['paid']['collected'] ?? null)
+    && is_int($allAmounts['paid']['outstanding'] ?? null)
+    && is_int($allAmounts['overpaid']['receivable'] ?? null)
+    && is_int($allAmounts['overpaid']['collected'] ?? null)
+    && is_int($allAmounts['overpaid']['outstanding'] ?? null)
+);
+
+// 2. Cho từng học kỳ riêng biệt (1, 2, 3), endpoint trả về số nguyên không có null cho cả 3 cột số tiền
+$semAmtsIntMatch = true;
+foreach ([1, 2, 3] as $sId) {
+    $semAmtRes = $statAmtClient->request('GET', "/reports/summary?semester={$sId}");
+    $sAmtData = $semAmtRes['body']['data'] ?? [];
+    $sa = $sAmtData['status_amounts'] ?? [];
+    if ($semAmtRes['status'] !== 200
+        || !is_int($sAmtData['receivable'])
+        || !is_int($sAmtData['collected'])
+        || !is_int($sAmtData['outstanding'])
+        || !is_int($sa['unpaid']['receivable'] ?? null)
+        || !is_int($sa['unpaid']['collected'] ?? null)
+        || !is_int($sa['unpaid']['outstanding'] ?? null)
+        || !is_int($sa['partial']['receivable'] ?? null)
+        || !is_int($sa['partial']['collected'] ?? null)
+        || !is_int($sa['partial']['outstanding'] ?? null)
+        || !is_int($sa['paid']['receivable'] ?? null)
+        || !is_int($sa['paid']['collected'] ?? null)
+        || !is_int($sa['paid']['outstanding'] ?? null)
+        || !is_int($sa['overpaid']['receivable'] ?? null)
+        || !is_int($sa['overpaid']['collected'] ?? null)
+        || !is_int($sa['overpaid']['outstanding'] ?? null)
+    ) {
+        $semAmtsIntMatch = false;
+        break;
+    }
+}
+it("Endpoint trả về số nguyên không có null cho cả 3 cột số tiền trong từng học kỳ (1, 2, 3)", $semAmtsIntMatch);
+
+// 3. Phương trình đối soát: receivable = collected + outstanding cho mọi phạm vi (ALL, 1, 2, 3) và cho từng trạng thái
+$reconcilesAllScopes = true;
+foreach (['ALL', 1, 2, 3] as $scopeVal) {
+    $param = $scopeVal === 'ALL' ? '' : "?semester={$scopeVal}";
+    $res = $statAmtClient->request('GET', "/reports/summary{$param}");
+    $d = $res['body']['data'] ?? [];
+    $rec = $d['receivable'] ?? -1;
+    $col = $d['collected'] ?? -2;
+    $out = $d['outstanding'] ?? -3;
+    $recOk = ($col + $out) === $rec && ($d['reconciles'] ?? false) === true;
+    
+    // Kiểm tra từng dòng trạng thái cũng phải cân bằng: receivable = collected + outstanding
+    $sa = $d['status_amounts'] ?? [];
+    $unpaidOk = (($sa['unpaid']['collected'] ?? 0) + ($sa['unpaid']['outstanding'] ?? 0)) === ($sa['unpaid']['receivable'] ?? -1);
+    $partialOk = (($sa['partial']['collected'] ?? 0) + ($sa['partial']['outstanding'] ?? 0)) === ($sa['partial']['receivable'] ?? -1);
+    $paidOk = (($sa['paid']['collected'] ?? 0) + ($sa['paid']['outstanding'] ?? 0)) === ($sa['paid']['receivable'] ?? -1);
+    $overpaidOk = (($sa['overpaid']['collected'] ?? 0) + ($sa['overpaid']['outstanding'] ?? 0)) === ($sa['overpaid']['receivable'] ?? -1);
+
+    if (!$recOk || !$unpaidOk || !$partialOk || !$paidOk || !$overpaidOk) {
+        $reconcilesAllScopes = false;
+        break;
+    }
+}
+it("Phương trình đối soát receivable = collected + outstanding cân bằng tuyệt đối trong mọi phạm vi và từng trạng thái", $reconcilesAllScopes);
+
+// 4. Mỗi số tiền bằng đúng kết quả SQL trực tiếp từ shared derivation (calc.php) cho phạm vi ALL
+$sqlAllAmts = $pdo->query("SELECT 
+    COALESCE(SUM(v.net_due), 0) AS receivable,
+    COALESCE(SUM(LEAST(v.total_paid, v.net_due)), 0) AS collected,
+    COALESCE(SUM(v.outstanding_amount), 0) AS outstanding,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN v.net_due ELSE 0 END), 0) AS unpaid_rec,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS unpaid_col,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN v.outstanding_amount ELSE 0 END), 0) AS unpaid_out,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN v.net_due ELSE 0 END), 0) AS partial_rec,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS partial_col,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN v.outstanding_amount ELSE 0 END), 0) AS partial_out,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN v.net_due ELSE 0 END), 0) AS paid_rec,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS paid_col,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN v.outstanding_amount ELSE 0 END), 0) AS paid_out,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN v.net_due ELSE 0 END), 0) AS overpaid_rec,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS overpaid_col,
+    COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN v.outstanding_amount ELSE 0 END), 0) AS overpaid_out
+FROM {$calcSubSql} v")->fetch(PDO::FETCH_ASSOC);
+
+it("Mỗi số tiền của 3 cột trong phạm vi ALL bằng đúng kết quả SQL trực tiếp từ calc.php",
+    (int)$allAmtData['receivable'] === (int)$sqlAllAmts['receivable']
+    && (int)$allAmtData['collected'] === (int)$sqlAllAmts['collected']
+    && (int)$allAmtData['outstanding'] === (int)$sqlAllAmts['outstanding']
+    && (int)$allAmounts['unpaid']['receivable'] === (int)$sqlAllAmts['unpaid_rec']
+    && (int)$allAmounts['unpaid']['collected'] === (int)$sqlAllAmts['unpaid_col']
+    && (int)$allAmounts['unpaid']['outstanding'] === (int)$sqlAllAmts['unpaid_out']
+    && (int)$allAmounts['partial']['receivable'] === (int)$sqlAllAmts['partial_rec']
+    && (int)$allAmounts['partial']['collected'] === (int)$sqlAllAmts['partial_col']
+    && (int)$allAmounts['partial']['outstanding'] === (int)$sqlAllAmts['partial_out']
+    && (int)$allAmounts['paid']['receivable'] === (int)$sqlAllAmts['paid_rec']
+    && (int)$allAmounts['paid']['collected'] === (int)$sqlAllAmts['paid_col']
+    && (int)$allAmounts['paid']['outstanding'] === (int)$sqlAllAmts['paid_out']
+    && (int)$allAmounts['overpaid']['receivable'] === (int)$sqlAllAmts['overpaid_rec']
+    && (int)$allAmounts['overpaid']['collected'] === (int)$sqlAllAmts['overpaid_col']
+    && (int)$allAmounts['overpaid']['outstanding'] === (int)$sqlAllAmts['overpaid_out']
+);
+
+// 5. Mỗi số tiền cho từng học kỳ riêng biệt bằng đúng kết quả SQL trực tiếp từ calc.php
+$sqlAmtsSemsMatch = true;
+foreach ([1, 2, 3] as $sId) {
+    $semRes = $statAmtClient->request('GET', "/reports/summary?semester={$sId}");
+    $sData = $semRes['body']['data'] ?? [];
+    $sa = $sData['status_amounts'] ?? [];
+    $sqlSem = $pdo->query("SELECT 
+        COALESCE(SUM(v.net_due), 0) AS receivable,
+        COALESCE(SUM(LEAST(v.total_paid, v.net_due)), 0) AS collected,
+        COALESCE(SUM(v.outstanding_amount), 0) AS outstanding,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN v.net_due ELSE 0 END), 0) AS unpaid_rec,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS unpaid_col,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Unpaid' THEN v.outstanding_amount ELSE 0 END), 0) AS unpaid_out,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN v.net_due ELSE 0 END), 0) AS partial_rec,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS partial_col,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Partially Paid' THEN v.outstanding_amount ELSE 0 END), 0) AS partial_out,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN v.net_due ELSE 0 END), 0) AS paid_rec,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS paid_col,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Fully Paid' THEN v.outstanding_amount ELSE 0 END), 0) AS paid_out,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN v.net_due ELSE 0 END), 0) AS overpaid_rec,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN LEAST(v.total_paid, v.net_due) ELSE 0 END), 0) AS overpaid_col,
+        COALESCE(SUM(CASE WHEN v.derived_status = 'Overpaid' THEN v.outstanding_amount ELSE 0 END), 0) AS overpaid_out
+    FROM {$calcSubSql} v WHERE v.semester_id = {$sId}")->fetch(PDO::FETCH_ASSOC);
+
+    if ((int)$sData['receivable'] !== (int)$sqlSem['receivable']
+        || (int)$sData['collected'] !== (int)$sqlSem['collected']
+        || (int)$sData['outstanding'] !== (int)$sqlSem['outstanding']
+        || (int)($sa['unpaid']['receivable'] ?? -1) !== (int)$sqlSem['unpaid_rec']
+        || (int)($sa['unpaid']['collected'] ?? -1) !== (int)$sqlSem['unpaid_col']
+        || (int)($sa['unpaid']['outstanding'] ?? -1) !== (int)$sqlSem['unpaid_out']
+        || (int)($sa['partial']['receivable'] ?? -1) !== (int)$sqlSem['partial_rec']
+        || (int)($sa['partial']['collected'] ?? -1) !== (int)$sqlSem['partial_col']
+        || (int)($sa['partial']['outstanding'] ?? -1) !== (int)$sqlSem['partial_out']
+        || (int)($sa['paid']['receivable'] ?? -1) !== (int)$sqlSem['paid_rec']
+        || (int)($sa['paid']['collected'] ?? -1) !== (int)$sqlSem['paid_col']
+        || (int)($sa['paid']['outstanding'] ?? -1) !== (int)$sqlSem['paid_out']
+        || (int)($sa['overpaid']['receivable'] ?? -1) !== (int)$sqlSem['overpaid_rec']
+        || (int)($sa['overpaid']['collected'] ?? -1) !== (int)$sqlSem['overpaid_col']
+        || (int)($sa['overpaid']['outstanding'] ?? -1) !== (int)$sqlSem['overpaid_out']
+    ) {
+        $sqlAmtsSemsMatch = false;
+        break;
+    }
+}
+it("Mỗi số tiền của 3 cột cho từng học kỳ riêng biệt bằng đúng kết quả SQL trực tiếp từ calc.php", $sqlAmtsSemsMatch);
+
+// 6. Học kỳ không có hồ sơ học phí nào trả về 0 cho cả 3 cột số tiền, không phải null hay '-'
+$pdo->exec("INSERT INTO semesters (term_no, academic_year_start) VALUES (3, 2035)");
+$noRecSemId2 = (int)$pdo->lastInsertId();
+$noRecAmtRes = $statAmtClient->request('GET', "/reports/summary?semester={$noRecSemId2}");
+$noRecAmtData = $noRecAmtRes['body']['data'] ?? [];
+$noRecStatusAmts = $noRecAmtData['status_amounts'] ?? [];
+it("Học kỳ không có hồ sơ học phí nào trả về 0 cho cả 3 cột số tiền ở mọi trạng thái và tổng", 
+    $noRecAmtRes['status'] === 200
+    && ($noRecAmtData['receivable'] ?? -1) === 0
+    && ($noRecAmtData['collected'] ?? -1) === 0
+    && ($noRecAmtData['outstanding'] ?? -1) === 0
+    && ($noRecStatusAmts['unpaid']['receivable'] ?? -1) === 0
+    && ($noRecStatusAmts['unpaid']['collected'] ?? -1) === 0
+    && ($noRecStatusAmts['unpaid']['outstanding'] ?? -1) === 0
+    && ($noRecStatusAmts['partial']['receivable'] ?? -1) === 0
+    && ($noRecStatusAmts['partial']['collected'] ?? -1) === 0
+    && ($noRecStatusAmts['partial']['outstanding'] ?? -1) === 0
+    && ($noRecStatusAmts['paid']['receivable'] ?? -1) === 0
+    && ($noRecStatusAmts['paid']['collected'] ?? -1) === 0
+    && ($noRecStatusAmts['paid']['outstanding'] ?? -1) === 0
+    && ($noRecStatusAmts['overpaid']['receivable'] ?? -1) === 0
+    && ($noRecStatusAmts['overpaid']['collected'] ?? -1) === 0
+    && ($noRecStatusAmts['overpaid']['outstanding'] ?? -1) === 0
+);
+$pdo->exec("DELETE FROM semesters WHERE id = {$noRecSemId2}");
+
+// 7. Khoản nộp thừa (overpaid excess) được loại trừ khỏi tiền còn nợ và báo cáo riêng biệt
+$sem2AmtRes = $statAmtClient->request('GET', '/reports/summary?semester=2');
+$sem2AmtData = $sem2AmtRes['body']['data'] ?? [];
+$sem2Overpaid = $sem2AmtData['overpaid'] ?? [];
+$sem2StatusAmts = $sem2AmtData['status_amounts'] ?? [];
+it("Khoản nộp thừa (overpaid excess) được loại trừ khỏi tiền còn nợ và báo cáo riêng biệt (1.700.000)", 
+    $sem2AmtRes['status'] === 200
+    && (int)$sem2Overpaid['amount'] === 1700000
+    && (int)$sem2Overpaid['count'] === 2
+    && (int)($sem2StatusAmts['overpaid']['outstanding'] ?? -1) === 0
+    && (int)$sem2AmtData['outstanding'] === 11480000
+);
+
+// ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ
 // ----------------------------------------------------------------------------
 echo "\n" . COLOR_BOLD . "====================================================================\n";

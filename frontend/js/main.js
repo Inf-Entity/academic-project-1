@@ -511,8 +511,11 @@
         if (studentDisplay) {
           studentDisplay.innerHTML = `👤 Sinh viên: <strong>${escapeHTML(user.full_name || user.username)} (${escapeHTML(user.username.toUpperCase())})</strong>`;
         }
-        // Khởi tạo tab công nợ cho sinh viên
-        switchTab('student-debts');
+        // Khởi tạo tab theo hash hiện tại nếu hợp lệ, mặc định vào công nợ
+        const allowedStudentRoutes = ['student-registration', 'student-debts', 'student-payments', 'student-history'];
+        const currentHash = (window.location.hash || '').replace(/^#\/?/, '').trim();
+        const initialTab = allowedStudentRoutes.includes(currentHash) ? currentHash : 'student-debts';
+        switchTab(initialTab);
       }
     } else if (user.role === 'admin') {
       if (studentAppContainer) studentAppContainer.hidden = true;
@@ -757,7 +760,20 @@
 
     if (AppState.currentUser.role === 'student') {
       const allowedStudentRoutes = ['student-registration', 'student-debts', 'student-payments', 'student-history'];
-      const target = allowedStudentRoutes.includes(cleanHash) ? cleanHash : 'student-debts';
+      let target = allowedStudentRoutes.includes(cleanHash) ? cleanHash : null;
+      if (!target) {
+        if (cleanHash === 'payments' || cleanHash === 'student-payment' || cleanHash === 'pay') {
+          target = 'student-payments';
+        } else if (cleanHash === 'debts' || cleanHash === 'student-debt') {
+          target = 'student-debts';
+        } else if (cleanHash === 'registration' || cleanHash === 'register') {
+          target = 'student-registration';
+        } else if (cleanHash === 'history') {
+          target = 'student-history';
+        } else {
+          target = 'student-debts';
+        }
+      }
       if (cleanHash !== target) {
         window.location.hash = `#${target}`;
         return;
@@ -1042,18 +1058,34 @@
   async function loadReportsData() {
     const semSelect = document.getElementById('report-semester-filter');
     const semFilter = semSelect?.value || 'ALL';
+    const tbody = document.getElementById('report-status-breakdown-body');
+
     try {
       const summaryRes = await Api.get(`/reports/summary?semester=${encodeURIComponent(semFilter)}`);
       const feesRes = await Api.get(`/fee-records?semester=${encodeURIComponent(semFilter)}`);
 
-      if (summaryRes.ok) {
+      if (summaryRes && summaryRes.ok) {
         renderReportsSummary(summaryRes.data);
       }
-      if (feesRes.ok) {
+      if (feesRes && feesRes.ok) {
         renderReportsFeesTable(feesRes.data);
       }
       if (semSelect) Api.clearFieldError(null, semSelect, 'semester');
     } catch (err) {
+      if (tbody) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="text-center text-danger" style="padding: 1.5rem;">
+              <span>Không tải được thống kê. Vui lòng thử lại.</span>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="btn-retry-reports" style="margin-left: 0.75rem;">Thử lại</button>
+            </td>
+          </tr>
+        `;
+        document.getElementById('btn-retry-reports')?.addEventListener('click', () => {
+          loadReportsData();
+        });
+      }
+
       if (err.fields && err.fields.semester && semSelect) {
         Api.setFieldError(null, semSelect, err.fields.semester, 'semester');
       } else {
@@ -1063,9 +1095,11 @@
   }
 
   function renderReportsSummary(data) {
-    setElementText('kpi-receivable', Calc.formatVND(data.receivable));
-    setElementText('kpi-collected', Calc.formatVND(data.collected));
-    setElementText('kpi-outstanding', Calc.formatVND(data.outstanding));
+    if (!data) return;
+
+    setElementText('kpi-receivable', Calc.formatVND(data.receivable ?? 0));
+    setElementText('kpi-collected', Calc.formatVND(data.collected ?? 0));
+    setElementText('kpi-outstanding', Calc.formatVND(data.outstanding ?? 0));
 
     const reconStatusEl = document.getElementById('kpi-reconciliation-status');
     const reconHintEl = document.getElementById('kpi-reconciliation-hint');
@@ -1074,17 +1108,17 @@
       reconStatusEl.style.color = data.reconciles ? '#059669' : '#dc2626';
     }
     if (reconHintEl) {
-      reconHintEl.textContent = `Đã thu (${Calc.formatVND(data.collected)}) + Còn nợ (${Calc.formatVND(data.outstanding)}) = Phải thu (${Calc.formatVND(data.receivable)})`;
+      reconHintEl.textContent = `Đã thu (${Calc.formatVND(data.collected ?? 0)}) + Còn nợ (${Calc.formatVND(data.outstanding ?? 0)}) = Phải thu (${Calc.formatVND(data.receivable ?? 0)})`;
     }
 
     // Cảnh báo nộp thừa
     const overpaidAlert = document.getElementById('report-overpaid-alert');
     if (overpaidAlert) {
-      const hasOverpaid = data.overpaid && data.overpaid.count > 0;
+      const hasOverpaid = data.overpaid && (Number(data.overpaid.count) > 0);
       overpaidAlert.hidden = !hasOverpaid;
       if (hasOverpaid) {
-        setElementText('report-overpaid-count', data.overpaid.count);
-        setElementText('report-overpaid-amount', Calc.formatVND(data.overpaid.amount));
+        setElementText('report-overpaid-count', Number(data.overpaid.count));
+        setElementText('report-overpaid-amount', Calc.formatVND(data.overpaid.amount ?? 0));
       }
     }
 
@@ -1092,59 +1126,82 @@
     const tbody = document.getElementById('report-status-breakdown-body');
     if (!tbody) return;
 
-    const total = data.total_students_with_records || 1;
-    const unpaidCount = data.status_counts ? (data.status_counts.unpaid ?? 0) : 0;
-    const partialCount = data.status_counts ? (data.status_counts.partial ?? 0) : 0;
-    const paidCount = data.status_counts ? (data.status_counts.paid ?? 0) : 0;
-    const overpaidCount = (data.overpaid && data.overpaid.count) ? data.overpaid.count : 0;
-    const overpaidAmount = (data.overpaid && data.overpaid.amount) ? data.overpaid.amount : 0;
+    const total = Number.isFinite(Number(data.total_students_with_records)) ? Number(data.total_students_with_records) : 0;
+    // Đảm bảo số lượng luôn là số nguyên (integer count), không bao giờ hiển thị '-' hoặc null/undefined/NaN
+    const unpaidCount = Number.isFinite(Number(data.status_counts?.unpaid)) ? Number(data.status_counts.unpaid) : 0;
+    const partialCount = Number.isFinite(Number(data.status_counts?.partial)) ? Number(data.status_counts.partial) : 0;
+    const paidCount = Number.isFinite(Number(data.status_counts?.paid)) ? Number(data.status_counts.paid) : 0;
+    const overpaidCount = Number.isFinite(Number(data.overpaid?.count)) ? Number(data.overpaid.count) : 0;
+    const overpaidAmount = Number.isFinite(Number(data.overpaid?.amount)) ? Number(data.overpaid.amount) : 0;
 
-    const pctUnpaid = ((unpaidCount / total) * 100).toFixed(1);
-    const pctPartial = ((partialCount / total) * 100).toFixed(1);
-    const pctPaid = ((paidCount / total) * 100).toFixed(1);
-    const pctOverpaid = ((overpaidCount / total) * 100).toFixed(1);
-    const totalPct = (data.total_students_with_records === 0) ? '0%' : '100%';
+    const pctUnpaid = total > 0 ? ((unpaidCount / total) * 100).toFixed(1) : '0.0';
+    const pctPartial = total > 0 ? ((partialCount / total) * 100).toFixed(1) : '0.0';
+    const pctPaid = total > 0 ? ((paidCount / total) * 100).toFixed(1) : '0.0';
+    const pctOverpaid = total > 0 ? ((overpaidCount / total) * 100).toFixed(1) : '0.0';
+    const totalPct = total === 0 ? '0%' : '100%';
+
+    // Số tiền theo trạng thái (Tổng tiền phải thu, Tổng tiền đã thu, Tổng tiền còn nợ)
+    const statusAmounts = data.status_amounts || {};
+    const unpaidRec = Number.isFinite(Number(statusAmounts.unpaid?.receivable)) ? Number(statusAmounts.unpaid.receivable) : 0;
+    const unpaidCol = Number.isFinite(Number(statusAmounts.unpaid?.collected)) ? Number(statusAmounts.unpaid.collected) : 0;
+    const unpaidOut = Number.isFinite(Number(statusAmounts.unpaid?.outstanding)) ? Number(statusAmounts.unpaid.outstanding) : 0;
+
+    const partialRec = Number.isFinite(Number(statusAmounts.partial?.receivable)) ? Number(statusAmounts.partial.receivable) : 0;
+    const partialCol = Number.isFinite(Number(statusAmounts.partial?.collected)) ? Number(statusAmounts.partial.collected) : 0;
+    const partialOut = Number.isFinite(Number(statusAmounts.partial?.outstanding)) ? Number(statusAmounts.partial.outstanding) : 0;
+
+    const paidRec = Number.isFinite(Number(statusAmounts.paid?.receivable)) ? Number(statusAmounts.paid.receivable) : 0;
+    const paidCol = Number.isFinite(Number(statusAmounts.paid?.collected)) ? Number(statusAmounts.paid.collected) : 0;
+    const paidOut = Number.isFinite(Number(statusAmounts.paid?.outstanding)) ? Number(statusAmounts.paid.outstanding) : 0;
+
+    const overpaidRec = Number.isFinite(Number(statusAmounts.overpaid?.receivable)) ? Number(statusAmounts.overpaid.receivable) : 0;
+    const overpaidCol = Number.isFinite(Number(statusAmounts.overpaid?.collected)) ? Number(statusAmounts.overpaid.collected) : 0;
+    const overpaidOut = Number.isFinite(Number(statusAmounts.overpaid?.outstanding)) ? Number(statusAmounts.overpaid.outstanding) : 0;
+
+    const totalRec = Number.isFinite(Number(data.receivable)) ? Number(data.receivable) : 0;
+    const totalCol = Number.isFinite(Number(data.collected)) ? Number(data.collected) : 0;
+    const totalOut = Number.isFinite(Number(data.outstanding)) ? Number(data.outstanding) : 0;
 
     tbody.innerHTML = `
       <tr>
         <td><span class="badge badge-danger">Chưa thanh toán</span></td>
         <td class="text-right"><strong>${unpaidCount}</strong></td>
         <td class="text-right">${pctUnpaid}%</td>
-        <td class="text-right">-</td>
-        <td class="text-right">0 ₫</td>
-        <td class="text-right">-</td>
+        <td class="text-right">${Calc.formatVND(unpaidRec)}</td>
+        <td class="text-right">${Calc.formatVND(unpaidCol)}</td>
+        <td class="text-right">${Calc.formatVND(unpaidOut)}</td>
       </tr>
       <tr>
         <td><span class="badge badge-warning">Thanh toán một phần</span></td>
         <td class="text-right"><strong>${partialCount}</strong></td>
         <td class="text-right">${pctPartial}%</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
+        <td class="text-right">${Calc.formatVND(partialRec)}</td>
+        <td class="text-right">${Calc.formatVND(partialCol)}</td>
+        <td class="text-right">${Calc.formatVND(partialOut)}</td>
       </tr>
       <tr>
         <td><span class="badge badge-success">Đã thanh toán đủ</span></td>
         <td class="text-right"><strong>${paidCount}</strong></td>
         <td class="text-right">${pctPaid}%</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
-        <td class="text-right">0 ₫</td>
+        <td class="text-right">${Calc.formatVND(paidRec)}</td>
+        <td class="text-right">${Calc.formatVND(paidCol)}</td>
+        <td class="text-right">${Calc.formatVND(paidOut)}</td>
       </tr>
       <tr>
         <td><span class="badge badge-info">Nộp thừa (báo cáo riêng)</span></td>
         <td class="text-right"><strong>${overpaidCount}</strong></td>
         <td class="text-right">${pctOverpaid}%</td>
-        <td class="text-right">-</td>
-        <td class="text-right">-</td>
-        <td class="text-right">+${Calc.formatVND(overpaidAmount)}</td>
+        <td class="text-right">${Calc.formatVND(overpaidRec)}</td>
+        <td class="text-right">${Calc.formatVND(overpaidCol)}</td>
+        <td class="text-right">${Calc.formatVND(overpaidOut)}</td>
       </tr>
       <tr class="table-total-row">
         <td><strong>TỔNG CỘNG</strong></td>
-        <td class="text-right"><strong>${data.total_students_with_records}</strong></td>
+        <td class="text-right"><strong>${total}</strong></td>
         <td class="text-right"><strong>${totalPct}</strong></td>
-        <td class="text-right"><strong>${Calc.formatVND(data.receivable)}</strong></td>
-        <td class="text-right"><strong>${Calc.formatVND(data.collected)}</strong></td>
-        <td class="text-right"><strong>${Calc.formatVND(data.outstanding)}</strong></td>
+        <td class="text-right"><strong>${Calc.formatVND(totalRec)}</strong></td>
+        <td class="text-right"><strong>${Calc.formatVND(totalCol)}</strong></td>
+        <td class="text-right"><strong>${Calc.formatVND(totalOut)}</strong></td>
       </tr>
     `;
   }
@@ -3480,7 +3537,7 @@
               <td class="text-right">${Calc.formatVND(r.outstanding)}</td>
               <td class="text-center">
                 <span class="badge ${statusBadge}">${escapeHTML(r.status)}</span>
-                ${r.is_overpaid ? `<span class="badge badge-warning" style="display:block; margin-top:2px;">Nộp thừa ${Calc.formatVND(r.overpaid_amount)}</span>` : ''}
+                ${r.is_overpaid ? `<span class="badge badge-warning" style="display:block; margin-top:2px;">Nộp thừa ${Calc.formatVND(r.overpaid_amount)}</span><span class="badge badge-warning text-wrap" style="color: #b45309; background-color: #fef3c7; border: 1px solid #fde68a; font-weight: 500; padding: 0.25rem 0.5rem; display: block; margin-top: 4px;">Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.</span>` : ''}
               </td>
             </tr>
           `;
@@ -3498,31 +3555,118 @@
     const hint = document.getElementById('student-pay-max-hint');
     const successBox = document.getElementById('student-pay-success-box');
     const form = document.getElementById('student-payment-form');
+    const tbody = document.getElementById('student-payment-records-body');
+    const submitBtn = document.getElementById('btn-student-submit-pay');
+
     if (successBox) successBox.style.display = 'none';
     if (form) { form.reset(); Api.clearFieldErrors(form); }
 
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Đang tải danh sách khoản học phí...</td></tr>';
+    }
+
     try {
       const res = await Api.get('/student/debts');
-      if (!res || !res.ok) return;
-      const outstanding = res.data?.outstanding_records || [];
-      if (!select) return;
-
-      select.innerHTML = '<option value="">-- Chọn học kỳ còn nợ --</option>' + 
-        outstanding.map(r => `<option value="${r.id}" data-balance="${r.outstanding}">${escapeHTML(r.semester_label)} - Còn nợ: ${Calc.formatVND(r.outstanding)}</option>`).join('');
-
-      select.onchange = () => {
-        const opt = select.options[select.selectedIndex];
-        const bal = opt ? parseInt(opt.dataset.balance, 10) : 0;
-        if (amountInput && bal > 0) {
-          amountInput.value = bal;
-          amountInput.max = bal;
+      if (!res || !res.ok) {
+        if (tbody) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Không tải được danh sách khoản học phí. Vui lòng thử lại.</td></tr>';
         }
-        if (hint) {
-          hint.textContent = bal > 0 ? `Số tiền tối đa có thể nộp: ${Calc.formatVND(bal)}` : 'Số tiền không được vượt quá số dư còn nợ.';
+        return;
+      }
+      const data = res.data || {};
+      const allRecords = data.all_records || [];
+      const outstanding = data.outstanding_records || [];
+
+      // Render danh sách hồ sơ học phí trên màn hình thanh toán
+      if (tbody) {
+        if (allRecords.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted" style="padding: 1.5rem;">Chưa có khoản học phí nào được tạo.</td></tr>';
+        } else {
+          tbody.innerHTML = allRecords.map(r => {
+            let statusBadge = 'badge-secondary';
+            if (r.status === 'Đã thanh toán đủ') statusBadge = 'badge-success';
+            else if (r.status === 'Thanh toán một phần') statusBadge = 'badge-warning';
+            else if (r.status === 'Chưa thanh toán') statusBadge = 'badge-danger';
+
+            const exemptionText = r.exemption_amount > 0 
+              ? `<span title="${escapeHTML(r.exemption_reason || '')}">${Calc.formatVND(r.exemption_amount)}</span>`
+              : '-';
+
+            let actionHtml = '';
+            if (r.is_overpaid) {
+              actionHtml = `<span class="badge badge-warning text-wrap" style="color: #b45309; background-color: #fef3c7; border: 1px solid #fde68a; font-weight: 500; padding: 0.35rem 0.5rem; display: inline-block;">Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.</span>`;
+            } else if (r.outstanding > 0) {
+              actionHtml = `<button type="button" class="btn btn-sm btn-success btn-pay-record" data-fee-id="${r.id}" data-balance="${r.outstanding}">💳 Thanh toán</button>`;
+            } else {
+              actionHtml = `<button type="button" class="btn btn-sm btn-secondary" disabled>Đã thanh toán đủ</button>`;
+            }
+
+            return `
+              <tr>
+                <td><strong>${escapeHTML(r.semester_label)}</strong></td>
+                <td class="text-right">${r.registered_credits}</td>
+                <td class="text-right">${Calc.formatVND(r.gross_tuition)}</td>
+                <td class="text-right">${exemptionText}</td>
+                <td class="text-right"><strong>${Calc.formatVND(r.net_due)}</strong></td>
+                <td class="text-right">${Calc.formatVND(r.total_paid)}</td>
+                <td class="text-right" style="${r.outstanding > 0 ? 'color: #ef4444; font-weight: bold;' : ''}">${Calc.formatVND(r.outstanding)}</td>
+                <td class="text-center">
+                  <span class="badge ${statusBadge}">${escapeHTML(r.status)}</span>
+                  ${r.is_overpaid ? `<span class="badge badge-warning" style="display:block; margin-top:2px;">Nộp thừa ${Calc.formatVND(r.overpaid_amount)}</span>` : ''}
+                </td>
+                <td class="text-center">${actionHtml}</td>
+              </tr>
+            `;
+          }).join('');
+
+          tbody.querySelectorAll('.btn-pay-record').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const feeId = btn.dataset.feeId;
+              const balance = parseInt(btn.dataset.balance, 10);
+              if (select) {
+                select.value = feeId;
+                select.dispatchEvent(new Event('change'));
+              }
+              if (amountInput && balance > 0) {
+                amountInput.value = balance;
+                amountInput.focus();
+              }
+              form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+          });
         }
-      };
+      }
+
+      // Cập nhật dropdown chọn khoản học phí cần thanh toán
+      if (select) {
+        if (outstanding.length === 0) {
+          select.innerHTML = '<option value="">-- Bạn không có học kỳ nào còn nợ --</option>';
+          if (submitBtn) submitBtn.disabled = true;
+          if (hint) hint.textContent = 'Bạn đã hoàn thành toàn bộ nghĩa vụ tài chính.';
+        } else {
+          select.innerHTML = '<option value="">-- Chọn học kỳ còn nợ --</option>' + 
+            outstanding.map(r => `<option value="${r.id}" data-balance="${r.outstanding}">${escapeHTML(r.semester_label)} - Còn nợ: ${Calc.formatVND(r.outstanding)}</option>`).join('');
+          if (submitBtn) submitBtn.disabled = false;
+          if (hint) hint.textContent = 'Số tiền không được vượt quá số dư còn nợ.';
+        }
+
+        select.onchange = () => {
+          const opt = select.options[select.selectedIndex];
+          const bal = opt ? parseInt(opt.dataset.balance, 10) : 0;
+          if (amountInput && bal > 0) {
+            amountInput.value = bal;
+            amountInput.max = bal;
+          }
+          if (hint) {
+            hint.textContent = bal > 0 ? `Số tiền tối đa có thể nộp: ${Calc.formatVND(bal)}` : 'Số tiền không được vượt quá số dư còn nợ.';
+          }
+        };
+      }
     } catch (e) {
       console.warn('Lỗi tải danh sách hồ sơ cần thanh toán:', e);
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger">Không tải được danh sách khoản học phí. Vui lòng thử lại.</td></tr>';
+      }
     }
   }
 

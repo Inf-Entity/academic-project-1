@@ -514,7 +514,7 @@ function handle_student_routes(string $method, string $path, array $matches): vo
                 'status'             => $statusInfo['status_label'],
                 'is_overpaid'        => $statusInfo['is_overpaid'],
                 'overpaid_amount'    => $statusInfo['overpaid_amount'],
-                'warning'            => $statusInfo['is_overpaid'] ? 'Hồ sơ có số tiền thừa. Vui lòng liên hệ phòng đào tạo.' : null
+                'warning'            => $statusInfo['is_overpaid'] ? 'Hồ sơ đang có số tiền thừa. Vui lòng liên hệ phòng đào tạo.' : null
             ];
 
             $allRecords[] = $item;
