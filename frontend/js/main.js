@@ -15,6 +15,7 @@
   const AppState = {
     currentUser: null,
     currentTab: 'reports',
+    currentSubView: null,
     semesters: [],
     students: [],
     rates: [],
@@ -632,14 +633,26 @@
   }
 
   function applyBadgeCounts(counts) {
+    // API field mapping per specification:
+    // counts.refunds -> pending refund requests count (used for parent "Yêu cầu hoàn tiền" and sub-menu "Hoàn tiền chờ duyệt")
+    // counts.pending_profiles -> pending tuition fee profiles count (used for sub-menu "Hồ sơ chờ duyệt")
+    // counts.new_transactions -> unviewed ledger transactions count
+    // counts.overpaid_profiles -> overpaid tuition profiles count
     const refunds = counts.refunds || 0;
     const newTx = counts.new_transactions || 0;
     const pendingProfiles = counts.pending_profiles || 0;
     const overpaidProfiles = counts.overpaid_profiles || 0;
 
-    renderBadgeElement('nav-badge-refunds', refunds, 'tab-refunds', 'Hoàn tiền', 'mục cần xử lý');
+    // Parent "Yêu cầu hoàn tiền" badge (sum of pending refund requests)
+    renderBadgeElement('nav-badge-parent-refunds', refunds, 'subtab-refunds', 'Yêu cầu hoàn tiền', 'mục chờ duyệt');
+    // Top-level "Thu học phí & hoàn trả" badge
+    renderBadgeElement('nav-badge-payments', refunds, 'tab-payments', 'Thu học phí & Hoàn trả', 'mục chờ duyệt');
+    // Sub-menu item 1: "Hoàn tiền chờ duyệt" (pending refund count)
+    renderBadgeElement('nav-badge-sub-pending-refunds', refunds, 'submenu-item-refunds-pending', 'Hoàn tiền chờ duyệt', 'yêu cầu');
+    // Sub-menu item 2: "Hồ sơ chờ duyệt" (pending profile count)
+    renderBadgeElement('nav-badge-sub-pending-profiles', pendingProfiles, 'submenu-item-refunds-profiles', 'Hồ sơ chờ duyệt', 'hồ sơ');
+
     renderBadgeElement('nav-badge-new-tx', newTx, 'tab-search', 'Tra cứu Lịch sử', 'giao dịch mới');
-    renderBadgeElement('nav-badge-pending', pendingProfiles, 'tab-pending', 'Hồ sơ chờ duyệt', 'mục cần xử lý');
     renderBadgeElement('nav-badge-overpaid', overpaidProfiles, 'tab-fees', 'Hồ sơ Học phí', 'hồ sơ có số tiền thừa');
   }
 
@@ -678,14 +691,14 @@
       clearInterval(badgePollInterval);
       badgePollInterval = null;
     }
-    ['nav-badge-refunds', 'nav-badge-new-tx', 'nav-badge-pending', 'nav-badge-overpaid'].forEach(id => {
+    ['nav-badge-parent-refunds', 'nav-badge-payments', 'nav-badge-sub-pending-refunds', 'nav-badge-sub-pending-profiles', 'nav-badge-new-tx', 'nav-badge-overpaid'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.textContent = '';
         el.hidden = true;
       }
     });
-    ['tab-refunds', 'tab-search', 'tab-pending', 'tab-fees'].forEach(id => {
+    ['subtab-refunds', 'tab-payments', 'submenu-item-refunds-pending', 'submenu-item-refunds-profiles', 'tab-search', 'tab-fees'].forEach(id => {
       const tabBtn = document.getElementById(id);
       if (tabBtn) {
         tabBtn.removeAttribute('aria-label');
@@ -704,33 +717,113 @@
     }
   }
 
+  function navigateTo(hash) {
+    if (window.location.hash === hash) {
+      handleRouteChange();
+    } else {
+      window.location.hash = hash;
+    }
+  }
+
   function switchTab(tabName) {
     if (AppState.currentUser?.role === 'student') {
       const allowedStudentTabs = ['student-registration', 'student-debts', 'student-payments', 'student-history'];
-      if (!allowedStudentTabs.includes(tabName)) {
-        tabName = 'student-debts';
-      }
+      const target = allowedStudentTabs.includes(tabName) ? tabName : 'student-debts';
+      navigateTo(`#${target}`);
+      return;
     }
-    AppState.currentTab = tabName;
 
-    // Cập nhật nav tabs
+    // Admin mapping
+    let targetHash = '#reports';
+    if (['reports', 'students', 'rates', 'fees', 'payments', 'search'].includes(tabName)) {
+      targetHash = `#${tabName}`;
+    } else if (tabName === 'refunds') {
+      targetHash = '#refunds/pending';
+    } else if (tabName === 'pending') {
+      targetHash = '#refunds/profiles';
+    }
+
+    navigateTo(targetHash);
+  }
+
+  function handleRouteChange() {
+    if (!AppState.currentUser) {
+      // User is not logged in: stay on login screen, do not load or expose data
+      return;
+    }
+
+    const rawHash = window.location.hash || '';
+    const cleanHash = rawHash.replace(/^#\/?/, '').trim();
+
+    if (AppState.currentUser.role === 'student') {
+      const allowedStudentRoutes = ['student-registration', 'student-debts', 'student-payments', 'student-history'];
+      const target = allowedStudentRoutes.includes(cleanHash) ? cleanHash : 'student-debts';
+      if (cleanHash !== target) {
+        window.location.hash = `#${target}`;
+        return;
+      }
+      applyStudentTab(target);
+      return;
+    }
+
+    // Admin role
+    // Check old/removed routes: show Vietnamese notification and fallback to default screen
+    const removedRoutes = ['pending', 'refunds', 'pending-profiles', 'pending-refunds'];
+    if (removedRoutes.includes(cleanHash)) {
+      showToast('Trang không tồn tại.', 'warning');
+      window.location.hash = '#reports';
+      return;
+    }
+
+    if (!cleanHash || cleanHash === '') {
+      window.location.hash = '#reports';
+      return;
+    }
+
+    if (cleanHash === 'refunds/pending') {
+      applyAdminSubRoute('payments', 'refunds-pending');
+    } else if (cleanHash === 'refunds/profiles') {
+      applyAdminSubRoute('payments', 'refunds-profiles');
+    } else if (cleanHash === 'payments') {
+      applyAdminSubRoute('payments', 'transactions');
+    } else if (['reports', 'students', 'rates', 'fees', 'search'].includes(cleanHash)) {
+      applyAdminTab(cleanHash);
+    } else {
+      showToast('Trang không tồn tại.', 'warning');
+      window.location.hash = '#reports';
+    }
+  }
+
+  function applyAdminTab(tabName) {
+    AppState.currentTab = tabName;
+    AppState.currentSubView = null;
+
+    // Update top-level nav tabs (.nav-tabs)
     const tabButtons = document.querySelectorAll('.nav-tabs button[role="tab"]');
     tabButtons.forEach(btn => {
-      const isSelected = btn.id === `tab-${tabName}`;
+      const isSelected = (btn.id === `tab-${tabName}`);
       btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
       btn.tabIndex = isSelected ? 0 : -1;
     });
 
-    // Cập nhật panels
+    // Update panels
     const panels = document.querySelectorAll('.tab-panel');
     panels.forEach(panel => {
-      const targetPanelId = (tabName === 'pending') ? 'panel-fees' : `panel-${tabName}`;
-      const isActive = panel.id === targetPanelId;
+      const isActive = (panel.id === `panel-${tabName}`);
       panel.hidden = !isActive;
       panel.classList.toggle('active', isActive);
     });
 
-    // Nạp dữ liệu tương ứng cho tab
+    // Collapse sub-nav in payments when navigating away
+    const submenuRefunds = document.getElementById('submenu-refunds');
+    const refundsParentBtn = document.getElementById('subtab-refunds');
+    if (submenuRefunds) submenuRefunds.hidden = true;
+    if (refundsParentBtn) {
+      refundsParentBtn.classList.remove('active');
+      refundsParentBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    // Load data for tab
     if (tabName === 'reports') loadReportsData();
     else if (tabName === 'students') loadStudentsData();
     else if (tabName === 'rates') loadRatesData();
@@ -741,21 +834,147 @@
       }
       loadFeesData();
     }
-    else if (tabName === 'pending') {
-      const statusSelect = document.getElementById('fee-filter-status');
-      if (statusSelect) {
-        statusSelect.value = 'PENDING';
-      }
-      loadFeesData();
-    }
-    else if (tabName === 'refunds') loadApprovalQueue();
-    else if (tabName === 'payments') loadPaymentsData();
     else if (tabName === 'search') {
       loadHistoryData();
       markHistoryAsSeen();
     }
-    // Phân hệ Cổng Sinh viên
-    else if (tabName === 'student-registration') loadStudentSemesters();
+  }
+
+  function applyAdminSubRoute(tabName, subview) {
+    AppState.currentTab = tabName;
+    AppState.currentSubView = subview;
+
+    // Update top-level nav tabs (.nav-tabs)
+    const tabButtons = document.querySelectorAll('.nav-tabs button[role="tab"]');
+    tabButtons.forEach(btn => {
+      const isSelected = (btn.id === `tab-${tabName}`);
+      btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      btn.tabIndex = isSelected ? 0 : -1;
+    });
+
+    // Update panels
+    const panels = document.querySelectorAll('.tab-panel');
+    panels.forEach(panel => {
+      const isActive = (panel.id === `panel-${tabName}`);
+      panel.hidden = !isActive;
+      panel.classList.toggle('active', isActive);
+    });
+
+    // Configure sub-navigation and sub-views in panel-payments:
+    const txBtn = document.getElementById('subtab-all-tx');
+    const refundsParentBtn = document.getElementById('subtab-refunds');
+    const submenuRefunds = document.getElementById('submenu-refunds');
+    const subPendingRefundsLink = document.getElementById('submenu-item-refunds-pending');
+    const subPendingProfilesLink = document.getElementById('submenu-item-refunds-profiles');
+
+    const txContainer = document.getElementById('tx-view-container');
+    const approvalQueueContainer = document.getElementById('approval-queue-view-container');
+    const pendingProfilesContainer = document.getElementById('pending-profiles-view-container');
+
+    if (subview === 'transactions') {
+      if (txBtn) {
+        txBtn.classList.add('active');
+        txBtn.setAttribute('aria-current', 'page');
+      }
+      if (refundsParentBtn) {
+        refundsParentBtn.classList.remove('active');
+        refundsParentBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (submenuRefunds) {
+        submenuRefunds.hidden = true;
+      }
+      if (subPendingRefundsLink) {
+        subPendingRefundsLink.classList.remove('active');
+        subPendingRefundsLink.removeAttribute('aria-current');
+      }
+      if (subPendingProfilesLink) {
+        subPendingProfilesLink.classList.remove('active');
+        subPendingProfilesLink.removeAttribute('aria-current');
+      }
+
+      if (txContainer) txContainer.hidden = false;
+      if (approvalQueueContainer) approvalQueueContainer.hidden = true;
+      if (pendingProfilesContainer) pendingProfilesContainer.hidden = true;
+
+      loadPaymentsData();
+    } else if (subview === 'refunds-pending') {
+      if (txBtn) {
+        txBtn.classList.remove('active');
+        txBtn.removeAttribute('aria-current');
+      }
+      // Parent menu stays expanded while either sub-menu screen is active
+      if (refundsParentBtn) {
+        refundsParentBtn.classList.add('active');
+        refundsParentBtn.setAttribute('aria-expanded', 'true');
+      }
+      if (submenuRefunds) {
+        submenuRefunds.hidden = false;
+      }
+      if (subPendingRefundsLink) {
+        subPendingRefundsLink.classList.add('active');
+        subPendingRefundsLink.setAttribute('aria-current', 'page');
+      }
+      if (subPendingProfilesLink) {
+        subPendingProfilesLink.classList.remove('active');
+        subPendingProfilesLink.removeAttribute('aria-current');
+      }
+
+      if (txContainer) txContainer.hidden = true;
+      if (approvalQueueContainer) approvalQueueContainer.hidden = false;
+      if (pendingProfilesContainer) pendingProfilesContainer.hidden = true;
+
+      loadApprovalQueue();
+      updateNavBadges();
+    } else if (subview === 'refunds-profiles') {
+      if (txBtn) {
+        txBtn.classList.remove('active');
+        txBtn.removeAttribute('aria-current');
+      }
+      // Parent menu stays expanded while either sub-menu screen is active
+      if (refundsParentBtn) {
+        refundsParentBtn.classList.add('active');
+        refundsParentBtn.setAttribute('aria-expanded', 'true');
+      }
+      if (submenuRefunds) {
+        submenuRefunds.hidden = false;
+      }
+      if (subPendingRefundsLink) {
+        subPendingRefundsLink.classList.remove('active');
+        subPendingRefundsLink.removeAttribute('aria-current');
+      }
+      if (subPendingProfilesLink) {
+        subPendingProfilesLink.classList.add('active');
+        subPendingProfilesLink.setAttribute('aria-current', 'page');
+      }
+
+      if (txContainer) txContainer.hidden = true;
+      if (approvalQueueContainer) approvalQueueContainer.hidden = true;
+      if (pendingProfilesContainer) pendingProfilesContainer.hidden = false;
+
+      loadPendingProfilesData();
+      updateNavBadges();
+    }
+  }
+
+  function applyStudentTab(tabName) {
+    AppState.currentTab = tabName;
+    AppState.currentSubView = null;
+
+    const studentTabButtons = document.querySelectorAll('#student-app-container .nav-tabs button[role="tab"]');
+    studentTabButtons.forEach(btn => {
+      const isSelected = (btn.id === `tab-${tabName}`);
+      btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      btn.tabIndex = isSelected ? 0 : -1;
+    });
+
+    const panels = document.querySelectorAll('#student-app-container .tab-panel');
+    panels.forEach(panel => {
+      const isActive = (panel.id === `panel-${tabName}`);
+      panel.hidden = !isActive;
+      panel.classList.toggle('active', isActive);
+    });
+
+    if (tabName === 'student-registration') loadStudentSemesters();
     else if (tabName === 'student-debts') loadStudentDebts();
     else if (tabName === 'student-payments') loadStudentPaymentOptions();
     else if (tabName === 'student-history') loadStudentHistory();
@@ -772,9 +991,10 @@
       loadStudentsData(),
       loadPaymentsData(),
       loadApprovalQueue(),
+      loadPendingProfilesData(),
       updateNavBadges()
     ]);
-    switchTab(AppState.currentTab || 'reports');
+    handleRouteChange();
   }
 
   async function loadSemestersList() {
@@ -873,9 +1093,9 @@
     if (!tbody) return;
 
     const total = data.total_students_with_records || 1;
-    const unpaidCount = data.status_counts.unpaid || 0;
-    const partialCount = data.status_counts.partial || 0;
-    const paidCount = data.status_counts.paid || 0;
+    const unpaidCount = data.status_counts ? (data.status_counts.unpaid ?? 0) : 0;
+    const partialCount = data.status_counts ? (data.status_counts.partial ?? 0) : 0;
+    const paidCount = data.status_counts ? (data.status_counts.paid ?? 0) : 0;
     const overpaidCount = (data.overpaid && data.overpaid.count) ? data.overpaid.count : 0;
     const overpaidAmount = (data.overpaid && data.overpaid.amount) ? data.overpaid.amount : 0;
 
@@ -883,6 +1103,7 @@
     const pctPartial = ((partialCount / total) * 100).toFixed(1);
     const pctPaid = ((paidCount / total) * 100).toFixed(1);
     const pctOverpaid = ((overpaidCount / total) * 100).toFixed(1);
+    const totalPct = (data.total_students_with_records === 0) ? '0%' : '100%';
 
     tbody.innerHTML = `
       <tr>
@@ -920,7 +1141,7 @@
       <tr class="table-total-row">
         <td><strong>TỔNG CỘNG</strong></td>
         <td class="text-right"><strong>${data.total_students_with_records}</strong></td>
-        <td class="text-right"><strong>100%</strong></td>
+        <td class="text-right"><strong>${totalPct}</strong></td>
         <td class="text-right"><strong>${Calc.formatVND(data.receivable)}</strong></td>
         <td class="text-right"><strong>${Calc.formatVND(data.collected)}</strong></td>
         <td class="text-right"><strong>${Calc.formatVND(data.outstanding)}</strong></td>
@@ -1438,7 +1659,7 @@
           <div class="pending-refund-action">
             <span class="text-warning-dark font-weight-bold">Đang chờ duyệt hoàn tiền: ${Calc.formatVND(r.pending_amount || r.pending_refunds_sum || 0)}</span>
             <br>
-            <a href="javascript:void(0);" class="btn-link link-view-refund" data-id="${r.fee_record_id}">Xem yêu cầu</a>
+            <a href="#refunds/pending" class="btn-link link-view-refund" data-id="${r.fee_record_id}">Xem yêu cầu</a>
           </div>
         `;
       } else if (r.is_overpaid && (r.overpaid_amount - (r.pending_refunds_sum || 0) > 0)) {
@@ -1484,7 +1705,10 @@
       btn.addEventListener('click', () => openOverpaidResolutionModal(btn.dataset.id));
     });
     tbody.querySelectorAll('.link-view-refund').forEach(link => {
-      link.addEventListener('click', () => switchTab('refunds'));
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateTo('#refunds/pending');
+      });
     });
   }
 
@@ -1995,6 +2219,7 @@
         loadFeesData(),
         loadPaymentsData(),
         loadApprovalQueue(),
+        loadPendingProfilesData(),
         loadReportsData(),
         updateNavBadges()
       ]);
@@ -2020,6 +2245,7 @@
             loadFeesData(),
             loadPaymentsData(),
             loadApprovalQueue(),
+            loadPendingProfilesData(),
             loadReportsData(),
             updateNavBadges()
           ]);
@@ -2071,6 +2297,7 @@
         loadFeesData(),
         loadPaymentsData(),
         loadApprovalQueue(),
+        loadPendingProfilesData(),
         loadReportsData(),
         updateNavBadges()
       ]);
@@ -2328,6 +2555,7 @@
           loadFeesData(),
           loadPaymentsData(),
           loadApprovalQueue(),
+          loadPendingProfilesData(),
           loadReportsData(),
           updateNavBadges()
         ]);
@@ -2400,6 +2628,7 @@
               loadFeesData(),
               loadPaymentsData(),
               loadApprovalQueue(),
+              loadPendingProfilesData(),
               loadReportsData(),
               updateNavBadges()
             ]);
@@ -2470,103 +2699,21 @@
     }
   }
 
-  /* Tải bảng giao dịch & Yêu cầu hoàn tiền */
+  /* Tải bảng giao dịch sổ quỹ */
 
   async function loadPaymentsData() {
     try {
-      const [txRes, rfRes] = await Promise.all([
-        Api.get('/history'),
-        Api.get('/refunds')
-      ]);
+      const txRes = await Api.get('/history');
       if (txRes && txRes.ok) {
         renderTransactionsTable(txRes.data || []);
       }
-      if (rfRes && rfRes.ok) {
-        renderRefundsTable(rfRes.data || []);
-      }
     } catch (err) {
-      showToast('Lỗi tải dữ liệu thu chi & hoàn trả: ' + err.message, true);
+      showToast('Lỗi tải dữ liệu giao dịch sổ quỹ: ' + err.message, true);
     }
-  }
-
-  function renderRefundsTable(refunds) {
-    const countEl = document.getElementById('pending-refund-count');
-    const pendingCount = Array.isArray(refunds) ? refunds.filter(r => r.status === 'pending').length : 0;
-    if (countEl) {
-      countEl.textContent = pendingCount;
-    }
-
-    const tbody = document.getElementById('refunds-table-body');
-    if (!tbody) return;
-
-    if (!refunds || refunds.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">Chưa có yêu cầu hoàn tiền nào.</td></tr>';
-      return;
-    }
-
-    const currentUserId = AppState.currentUser ? AppState.currentUser.id : null;
-
-    tbody.innerHTML = refunds.map(r => {
-      let statusBadge = 'badge-secondary';
-      let statusLabel = r.status;
-      if (r.status === 'pending') {
-        statusBadge = 'badge-warning';
-        statusLabel = 'Chờ duyệt';
-      } else if (r.status === 'completed') {
-        statusBadge = 'badge-success';
-        statusLabel = 'Đã hoàn tất';
-      } else if (r.status === 'cancelled') {
-        statusBadge = 'badge-secondary';
-        statusLabel = 'Đã hủy';
-      }
-
-      const isCreator = (Number(r.created_by) === Number(currentUserId));
-      const canAction = (r.status === 'pending');
-      let actionContent = '-';
-      if (canAction) {
-        actionContent = isCreator ? `
-          <div class="action-cell-content">
-            <button type="button" class="btn btn-sm btn-outline-success" disabled>✓ Duyệt</button>
-            <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
-            <div class="maker-note">Không thể tự duyệt yêu cầu hoàn tiền do chính bạn tạo.</div>
-          </div>
-        ` : `
-          <div class="action-cell-content">
-            <button type="button" class="btn btn-sm btn-outline-success btn-complete-refund" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✓ Duyệt</button>
-            <button type="button" class="btn btn-sm btn-outline-danger btn-cancel-refund-item" data-id="${r.id}" data-fee-id="${r.fee_record_id}">✕ Hủy</button>
-          </div>
-        `;
-      } else if (r.status === 'completed') {
-        actionContent = `<small class="text-success font-weight-bold">Đã duyệt (${escapeHTML(r.completed_by_name || 'Admin')})</small>`;
-      } else if (r.status === 'cancelled') {
-        actionContent = `<small class="text-muted">Đã hủy${r.cancel_reason ? ': ' + escapeHTML(r.cancel_reason) : ''}</small>`;
-      }
-
-      return `
-        <tr>
-          <td><strong>YC-${String(r.id).padStart(4, '0')}</strong></td>
-          <td>${Calc.formatDateVN(r.created_at)}</td>
-          <td>${escapeHTML(r.student_code || '-')}</td>
-          <td>${escapeHTML(r.student_name || r.full_name || '-')}</td>
-          <td>${escapeHTML(r.semester_label || '-')}</td>
-          <td class="text-right text-danger"><strong>${Calc.formatVND(r.amount)}</strong></td>
-          <td>${escapeHTML(r.reason || '-')}</td>
-          <td><span class="badge ${statusBadge}">${statusLabel}</span></td>
-          <td class="text-center">${actionContent}</td>
-        </tr>
-      `;
-    }).join('');
-
-    tbody.querySelectorAll('.btn-complete-refund').forEach(btn => {
-      btn.addEventListener('click', () => completeRefund(btn.dataset.id, btn.dataset.feeId));
-    });
-    tbody.querySelectorAll('.btn-cancel-refund-item').forEach(btn => {
-      btn.addEventListener('click', () => openCancelRefundModal(btn.dataset.id, btn.dataset.feeId));
-    });
   }
 
   /* ==========================================================================
-     HÀNG ĐỢI DUYỆT HOÀN TIỀN (APPROVAL QUEUE - PART 2)
+     HÀNG ĐỢI DUYỆT HOÀN TIỀN & HỒ SƠ CHỜ DUYỆT
      ========================================================================== */
 
   async function loadApprovalQueue() {
@@ -2626,6 +2773,56 @@
     });
     tbody.querySelectorAll('.btn-cancel-refund-item').forEach(btn => {
       btn.addEventListener('click', () => openCancelRefundModal(btn.dataset.id, btn.dataset.feeId));
+    });
+  }
+
+  async function loadPendingProfilesData() {
+    try {
+      const res = await Api.get('/fee-records?status=PENDING');
+      if (res && res.ok) {
+        renderPendingProfilesTable(res.data || []);
+      }
+    } catch (err) {
+      showToast('Lỗi tải danh sách hồ sơ chờ duyệt: ' + err.message, 'error');
+    }
+  }
+
+  function renderPendingProfilesTable(records) {
+    const tbody = document.getElementById('pending-profiles-table-body');
+    if (!tbody) return;
+
+    if (!records || records.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted">Không có hồ sơ học phí nào đang chờ duyệt.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = records.map(r => {
+      const overpaidAmt = r.overpaid_amount || (r.total_paid - r.net_due);
+      const pendingAmt = r.pending_amount || r.pending_refunds_sum || 0;
+      return `
+        <tr>
+          <td><strong>${escapeHTML(r.student_code)}</strong></td>
+          <td>${escapeHTML(r.full_name)}</td>
+          <td>${escapeHTML(r.semester_label)}</td>
+          <td class="text-right">${r.registered_credits}</td>
+          <td class="text-right">${Calc.formatVND(r.rate_snapshot)}</td>
+          <td class="text-right"><strong>${Calc.formatVND(r.net_due)}</strong></td>
+          <td class="text-right text-primary">${Calc.formatVND(r.total_paid)}</td>
+          <td class="text-right text-danger"><strong>${Calc.formatVND(overpaidAmt)}</strong></td>
+          <td class="text-right text-warning-dark"><strong>${Calc.formatVND(pendingAmt)}</strong></td>
+          <td><span class="badge badge-warning">⏳ Chờ duyệt</span></td>
+          <td class="text-center">
+            <a href="#refunds/pending" class="btn-link link-view-refund" data-id="${r.fee_record_id}">Xem yêu cầu</a>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('.link-view-refund').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateTo('#refunds/pending');
+      });
     });
   }
 
@@ -3506,19 +3703,28 @@
       });
     });
 
-    // Sub-tabs in payments panel
-    document.getElementById('subtab-all-tx')?.addEventListener('click', () => {
-      document.getElementById('subtab-all-tx').classList.add('active');
-      document.getElementById('subtab-refunds').classList.remove('active');
-      document.getElementById('tx-view-container').hidden = false;
-      document.getElementById('refunds-view-container').hidden = true;
+    // Sub-navigation in "Thu học phí & Hoàn trả"
+    document.getElementById('subtab-all-tx')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigateTo('#payments');
     });
-    document.getElementById('subtab-refunds')?.addEventListener('click', () => {
-      document.getElementById('subtab-all-tx').classList.remove('active');
-      document.getElementById('subtab-refunds').classList.add('active');
-      document.getElementById('tx-view-container').hidden = true;
-      document.getElementById('refunds-view-container').hidden = false;
-      loadPaymentsData();
+    // Parent "Yêu cầu hoàn tiền" opens approval queue by default (one click)
+    document.getElementById('subtab-refunds')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigateTo('#refunds/pending');
+    });
+    // Sub-menu items
+    document.getElementById('submenu-item-refunds-pending')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigateTo('#refunds/pending');
+    });
+    document.getElementById('submenu-item-refunds-profiles')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigateTo('#refunds/profiles');
+    });
+    document.getElementById('btn-refresh-pending-profiles')?.addEventListener('click', () => {
+      loadPendingProfilesData();
+      updateNavBadges();
     });
 
     // Report filters
@@ -3648,7 +3854,10 @@
     });
 
     // Approval queue refresh
-    document.getElementById('btn-refresh-approval-queue')?.addEventListener('click', loadApprovalQueue);
+    document.getElementById('btn-refresh-approval-queue')?.addEventListener('click', () => {
+      loadApprovalQueue();
+      updateNavBadges();
+    });
 
     // Listen for write success to auto-refresh badges
     window.addEventListener('tuition:write-success', () => {
@@ -3895,6 +4104,11 @@
       if (event.persisted) {
         checkAuthSession();
       }
+    });
+
+    // Xử lý điều hướng URL hash (Hash-based routing & Browser Back/Forward navigation)
+    window.addEventListener('hashchange', () => {
+      handleRouteChange();
     });
   }
 

@@ -165,18 +165,8 @@
           </button>
         </li>
         <li role="presentation">
-          <button type="button" role="tab" id="tab-pending" aria-selected="false" aria-controls="panel-fees" tabindex="-1">
-            ⏳ Hồ sơ chờ duyệt <span class="nav-badge nav-badge-warning" id="nav-badge-pending" aria-hidden="true" hidden></span>
-          </button>
-        </li>
-        <li role="presentation">
-          <button type="button" role="tab" id="tab-refunds" aria-selected="false" aria-controls="panel-refunds" tabindex="-1">
-            💸 Hoàn tiền chờ duyệt <span class="nav-badge nav-badge-primary" id="nav-badge-refunds" aria-hidden="true" hidden></span>
-          </button>
-        </li>
-        <li role="presentation">
           <button type="button" role="tab" id="tab-payments" aria-selected="false" aria-controls="panel-payments" tabindex="-1">
-            💳 Thu học phí &amp; Hoàn trả
+            💳 Thu học phí &amp; Hoàn trả <span class="nav-badge nav-badge-primary" id="nav-badge-payments" aria-hidden="true" hidden></span>
           </button>
         </li>
         <li role="presentation">
@@ -466,13 +456,26 @@
           <button type="button" id="btn-open-payment-modal" class="btn btn-success">💵 Lập Phiếu Thu Học Phí</button>
         </div>
 
-        <!-- Tab con: Lịch sử phiếu thu / Yêu cầu hoàn tiền -->
-        <div class="sub-nav">
-          <button type="button" class="sub-tab-btn active" id="subtab-all-tx">Toàn bộ Giao dịch</button>
-          <button type="button" class="sub-tab-btn" id="subtab-refunds">Yêu cầu Hoàn tiền (<span id="pending-refund-count">0</span> chờ duyệt)</button>
-        </div>
+        <!-- Điều hướng phân hệ Thu học phí & Hoàn trả -->
+        <nav class="sub-nav" aria-label="Điều hướng thu học phí và hoàn trả">
+          <a href="#payments" class="sub-tab-btn active" id="subtab-all-tx" role="button" tabindex="0">Toàn bộ Giao dịch</a>
+          <div class="sub-nav-group" id="subnav-refunds-group">
+            <button type="button" class="sub-tab-btn sub-tab-parent" id="subtab-refunds" aria-expanded="false" aria-controls="submenu-refunds" tabindex="0">
+              Yêu cầu hoàn tiền <span class="nav-badge nav-badge-primary" id="nav-badge-parent-refunds" aria-hidden="true" hidden></span>
+            </button>
+            <div class="sub-menu-items" id="submenu-refunds" role="menu" hidden>
+              <a href="#refunds/pending" class="sub-menu-link" id="submenu-item-refunds-pending" role="menuitem" tabindex="0">
+                Hoàn tiền chờ duyệt <span class="nav-badge nav-badge-primary" id="nav-badge-sub-pending-refunds" aria-hidden="true" hidden></span>
+              </a>
+              <a href="#refunds/profiles" class="sub-menu-link" id="submenu-item-refunds-profiles" role="menuitem" tabindex="0">
+                Hồ sơ chờ duyệt <span class="nav-badge nav-badge-warning" id="nav-badge-sub-pending-profiles" aria-hidden="true" hidden></span>
+              </a>
+            </div>
+          </div>
+        </nav>
 
         <div class="content-card">
+          <!-- 1. TOÀN BỘ GIAO DỊCH -->
           <div id="tx-view-container">
             <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng toàn bộ giao dịch sổ quỹ">
               <table class="data-table">
@@ -498,23 +501,68 @@
             </div>
           </div>
 
-          <div id="refunds-view-container" hidden>
-            <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng yêu cầu hoàn tiền">
+          <!-- 2. HOÀN TIỀN CHỜ DUYỆT (Approval Queue) -->
+          <div id="approval-queue-view-container" hidden>
+            <div class="view-header-inline">
+              <div>
+                <h3>Hoàn tiền chờ duyệt</h3>
+                <p class="panel-desc">Danh sách các yêu cầu hoàn tiền đang chờ phê duyệt. Quy tắc Maker-Checker: người tạo yêu cầu không thể tự duyệt yêu cầu của chính mình.</p>
+              </div>
+              <div class="header-actions">
+                <button type="button" id="btn-refresh-approval-queue" class="btn btn-outline btn-sm">🔄 Làm mới</button>
+              </div>
+            </div>
+            <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng hoàn tiền chờ duyệt">
               <table class="data-table">
                 <thead>
                   <tr>
-                    <th scope="col">Mã yêu cầu</th>
+                    <th scope="col">Mã YC</th>
                     <th scope="col">Ngày tạo</th>
                     <th scope="col">Mã SV</th>
                     <th scope="col">Họ và tên</th>
                     <th scope="col">Học kỳ</th>
-                    <th scope="col" class="text-right">Số tiền hoàn</th>
+                    <th scope="col" class="text-right">Số tiền</th>
                     <th scope="col">Lý do hoàn tiền</th>
-                    <th scope="col">Trạng thái</th>
-                    <th scope="col" class="text-center">Xử lý duyệt</th>
+                    <th scope="col">Người yêu cầu</th>
+                    <th scope="col" class="text-center">Thao tác</th>
                   </tr>
                 </thead>
-                <tbody id="refunds-table-body">
+                <tbody id="approval-queue-table-body">
+                  <!-- Điền tự động bằng JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 3. HỒ SƠ CHỜ DUYỆT (Pending Profiles) -->
+          <div id="pending-profiles-view-container" hidden>
+            <div class="view-header-inline">
+              <div>
+                <h3>Hồ sơ chờ duyệt</h3>
+                <p class="panel-desc">Danh sách các hồ sơ học phí đang ở trạng thái Chờ duyệt (nộp thừa và có ít nhất một yêu cầu hoàn tiền đang chờ phê duyệt).</p>
+              </div>
+              <div class="header-actions">
+                <button type="button" id="btn-refresh-pending-profiles" class="btn btn-outline btn-sm">🔄 Làm mới</button>
+              </div>
+            </div>
+            <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng hồ sơ chờ duyệt">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Mã SV</th>
+                    <th scope="col">Họ và tên</th>
+                    <th scope="col">Học kỳ</th>
+                    <th scope="col" class="text-right">Số TC</th>
+                    <th scope="col" class="text-right">Đơn giá</th>
+                    <th scope="col" class="text-right">Phải nộp (Net)</th>
+                    <th scope="col" class="text-right">Đã nộp</th>
+                    <th scope="col" class="text-right">Tiền thừa</th>
+                    <th scope="col" class="text-right">Chờ hoàn</th>
+                    <th scope="col">Trạng thái</th>
+                    <th scope="col" class="text-center">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="pending-profiles-table-body">
                   <!-- Điền tự động bằng JavaScript -->
                 </tbody>
               </table>
@@ -620,41 +668,7 @@
         </div>
       </section>
 
-      <!-- 7. HOÀN TIỀN CHỜ DUYỆT (Module 8 - Approval Queue) -->
-      <section id="panel-refunds" role="tabpanel" aria-labelledby="tab-refunds" class="tab-panel" hidden>
-        <div class="panel-header">
-          <div>
-            <h2>Hoàn tiền chờ duyệt</h2>
-            <p class="panel-desc">Danh sách các yêu cầu hoàn tiền đang chờ phê duyệt. Quy tắc Maker-Checker: người tạo yêu cầu không thể tự duyệt yêu cầu của chính mình.</p>
-          </div>
-          <div class="header-actions">
-            <button type="button" id="btn-refresh-approval-queue" class="btn btn-outline btn-sm">🔄 Làm mới</button>
-          </div>
-        </div>
 
-        <div class="content-card">
-          <div class="table-wrapper" tabindex="0" role="region" aria-label="Bảng hoàn tiền chờ duyệt">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th scope="col">Mã YC</th>
-                  <th scope="col">Ngày tạo</th>
-                  <th scope="col">Mã SV</th>
-                  <th scope="col">Họ và tên</th>
-                  <th scope="col">Học kỳ</th>
-                  <th scope="col" class="text-right">Số tiền</th>
-                  <th scope="col">Lý do hoàn tiền</th>
-                  <th scope="col">Người yêu cầu</th>
-                  <th scope="col" class="text-center">Thao tác</th>
-                </tr>
-              </thead>
-              <tbody id="approval-queue-table-body">
-                <!-- Điền tự động bằng JavaScript -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
     </main>
   </div>
 

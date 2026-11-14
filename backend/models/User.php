@@ -14,7 +14,7 @@ class User {
      */
     public static function findByUsername(string $username, ?string $dbName = null): ?array {
         $db = Database::getConnection($dbName);
-        $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, failed_logins, locked_until, created_at FROM users WHERE username = :username LIMIT 1");
+        $stmt = $db->prepare("SELECT id, username, password_hash, full_name, role, student_id, must_change_password, failed_logins, locked_until, created_at FROM users WHERE username = :username LIMIT 1");
         $stmt->execute(['username' => $username]);
         $row = $stmt->fetch();
         return $row ?: null;
@@ -25,7 +25,7 @@ class User {
      */
     public static function findById(int $id, ?string $dbName = null): ?array {
         $db = Database::getConnection($dbName);
-        $stmt = $db->prepare("SELECT id, username, full_name, role, failed_logins, locked_until, created_at FROM users WHERE id = :id LIMIT 1");
+        $stmt = $db->prepare("SELECT id, username, full_name, role, student_id, must_change_password, failed_logins, locked_until, created_at FROM users WHERE id = :id LIMIT 1");
         $stmt->execute(['id' => $id]);
         $row = $stmt->fetch();
         return $row ?: null;
@@ -85,7 +85,8 @@ class User {
      * Run a dummy hash verification to prevent timing attacks
      */
     public static function dummyVerify(string $password): void {
-        $dummyHash = '$2y$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345';
+        // Valid bcrypt hash to ensure constant-time verification without PHP runtime warnings
+        $dummyHash = '$2y$10$Az4CwfdVPUtzW6zMM1VXROTxUL9xKQkEKe45FflKg8BGhn1VukJSO';
         password_verify($password, $dummyHash);
     }
 }

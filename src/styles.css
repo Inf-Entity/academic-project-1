@@ -789,11 +789,16 @@ textarea:focus {
 
 .sub-nav {
   display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
 }
 
 .sub-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   background: #ffffff;
   border: 1px solid var(--color-border);
   padding: 0.45rem 1rem;
@@ -802,13 +807,92 @@ textarea:focus {
   font-weight: 500;
   cursor: pointer;
   color: var(--color-text-muted);
+  text-decoration: none;
+  transition: all 0.15s ease-in-out;
 }
 
-.sub-tab-btn.active {
+.sub-tab-btn:hover,
+.sub-tab-btn:focus-visible {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.sub-tab-btn.active,
+.sub-tab-btn[aria-current="page"] {
   background: var(--color-primary-light);
   color: var(--color-primary);
   border-color: var(--color-primary);
   font-weight: 600;
+}
+
+.sub-nav-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sub-menu-items {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: #f1f5f9;
+  padding: 0.2rem 0.4rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.sub-menu-items[hidden] {
+  display: none !important;
+}
+
+.sub-menu-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+
+.sub-menu-link:hover,
+.sub-menu-link:focus-visible {
+  background: #ffffff;
+  color: var(--color-primary);
+  border-color: var(--color-border);
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.sub-menu-link.active,
+.sub-menu-link[aria-current="page"] {
+  background: #ffffff;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.view-header-inline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.view-header-inline h3 {
+  font-size: 1.15rem;
+  margin-bottom: 0.25rem;
+  color: var(--color-text);
 }
 
 /* Calculation preview box in modals */

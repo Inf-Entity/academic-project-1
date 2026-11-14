@@ -8,7 +8,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/response.php';
 
 function check_rate_limit(string $action = 'default', int $maxAttempts = 30, int $windowSeconds = 60): void {
-    if (isset($_SERVER['HTTP_X_TUITION_TEST_DB']) && $_SERVER['HTTP_X_TUITION_TEST_DB'] === 'tuition_test') {
+    $isTest = (isset($_SERVER['HTTP_X_TUITION_TEST_DB']) && $_SERVER['HTTP_X_TUITION_TEST_DB'] === 'tuition_test');
+    if ($isTest) {
         $maxAttempts = 500;
     }
     $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
@@ -17,7 +18,8 @@ function check_rate_limit(string $action = 'default', int $maxAttempts = 30, int
         @mkdir($cacheDir, 0777, true);
     }
 
-    $file = $cacheDir . '/' . md5($action . '_' . $ip) . '.json';
+    $scope = $isTest ? '_test' : '';
+    $file = $cacheDir . '/' . md5($action . '_' . $ip . $scope) . '.json';
     $now = time();
     $timestamps = [];
 

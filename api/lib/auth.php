@@ -120,7 +120,8 @@ function login_user(string $username, string $password): array {
     $stmt->execute(['username' => $username]);
     $user = $stmt->fetch();
 
-    $dummyHash = '$2y$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345';
+    // Valid bcrypt hash to ensure constant-time verification without PHP runtime warnings
+    $dummyHash = '$2y$10$Az4CwfdVPUtzW6zMM1VXROTxUL9xKQkEKe45FflKg8BGhn1VukJSO';
 
     if (!$user) {
         // Chạy password_verify giả lập để đảm bảo constant-time

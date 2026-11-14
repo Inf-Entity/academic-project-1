@@ -90,6 +90,8 @@ class UserController {
         $_SESSION['username']      = $user['username'];
         $_SESSION['full_name']     = $user['full_name'];
         $_SESSION['role']          = $user['role'];
+        $_SESSION['student_id']    = isset($user['student_id']) && $user['student_id'] !== null ? (int)$user['student_id'] : null;
+        $_SESSION['must_change_password'] = (int)($user['must_change_password'] ?? 0);
         $_SESSION['created_at']    = time();
         $_SESSION['last_activity'] = time();
 
@@ -98,11 +100,13 @@ class UserController {
         log_audit((int)$user['id'], 'login_success', 'users', (string)$user['id'], ['username' => $username]);
 
         json_success([
-            'id'         => (int)$user['id'],
-            'username'   => $user['username'],
-            'full_name'  => $user['full_name'],
-            'role'       => $user['role'],
-            'csrf_token' => $csrfToken
+            'id'                   => (int)$user['id'],
+            'username'             => $user['username'],
+            'full_name'            => $user['full_name'],
+            'role'                 => $user['role'],
+            'student_id'           => isset($user['student_id']) && $user['student_id'] !== null ? (int)$user['student_id'] : null,
+            'must_change_password' => (int)($user['must_change_password'] ?? 0),
+            'csrf_token'           => $csrfToken
         ], 200);
     }
 

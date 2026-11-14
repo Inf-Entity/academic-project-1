@@ -2885,6 +2885,175 @@ it("SV002 có tổng phải nộp 37.796.000, đã nộp 27.496.000, còn nợ 1
 );
 
 // ----------------------------------------------------------------------------
+// 24. KIỂM THỬ MỞ RỘNG: ĐĂNG NHẬP XÁC THỰC & BÁO CÁO THỐNG KÊ (ISSUES 1 & 2 VERIFICATION)
+// ----------------------------------------------------------------------------
+suite_header("24. Kiểm thử Mở rộng: Đăng nhập Xác thực & Báo cáo Thống kê");
+
+// A. Đăng nhập Admin và Sinh viên thành công trả về 200 kèm đầy đủ các trường quy định
+$freshClient = new ApiTestClient();
+$adminLoginRes = $freshClient->request('POST', '/login', [
+    'username' => 'admin',
+    'password' => 'Admin@123'
+]);
+$adminData = $adminLoginRes['body']['data'] ?? [];
+it("Admin login trả về HTTP 200 với ok: true và role 'admin'", 
+    $adminLoginRes['status'] === 200 
+    && ($adminLoginRes['body']['ok'] ?? false) === true
+    && ($adminData['role'] ?? '') === 'admin'
+    && ($adminData['username'] ?? '') === 'admin'
+    && array_key_exists('student_id', $adminData) && $adminData['student_id'] === null
+    && ($adminData['must_change_password'] ?? -1) === 0
+    && !empty($adminData['csrf_token'])
+);
+
+$svClient = new ApiTestClient();
+$svLoginRes = $svClient->request('POST', '/login', [
+    'username' => 'sv001',
+    'password' => 'Student@001'
+]);
+$svData = $svLoginRes['body']['data'] ?? [];
+it("Sinh viên sv001 login trả về HTTP 200 với ok: true, role 'student' và must_change_password", 
+    $svLoginRes['status'] === 200 
+    && ($svLoginRes['body']['ok'] ?? false) === true
+    && ($svData['role'] ?? '') === 'student'
+    && ($svData['username'] ?? '') === 'sv001'
+    && ($svData['student_id'] ?? 0) === 1
+    && ($svData['must_change_password'] ?? -1) === 0
+    && !empty($svData['csrf_token'])
+);
+
+// B. Sai mật khẩu, Tên đăng nhập không tồn tại, và Khóa tài khoản không phát sinh HTTP 500
+$wrongPwClient = new ApiTestClient();
+$wrongPwRes = $wrongPwClient->request('POST', '/login', [
+    'username' => 'admin',
+    'password' => 'WrongAdminPassword@999'
+]);
+it("Đăng nhập sai mật khẩu trả về HTTP 401 với thông báo 'Sai tên đăng nhập hoặc mật khẩu.' không bị lỗi 500", 
+    $wrongPwRes['status'] === 401 
+    && ($wrongPwRes['body']['ok'] ?? true) === false
+    && ($wrongPwRes['body']['error']['message'] ?? '') === 'Sai tên đăng nhập hoặc mật khẩu.'
+    && ($wrongPwRes['body']['error']['code'] ?? '') === 'INVALID_CREDENTIALS'
+);
+
+$unknownUserClient = new ApiTestClient();
+$unknownUserRes = $unknownUserClient->request('POST', '/login', [
+    'username' => 'nonexistent_user_99999',
+    'password' => 'SomePassword@123'
+]);
+it("Tên đăng nhập không tồn tại trả về HTTP 401 cùng thông báo quy định không bị lỗi 500", 
+    $unknownUserRes['status'] === 401 
+    && ($unknownUserRes['body']['ok'] ?? true) === false
+    && ($unknownUserRes['body']['error']['message'] ?? '') === 'Sai tên đăng nhập hoặc mật khẩu.'
+    && ($unknownUserRes['body']['error']['code'] ?? '') === 'INVALID_CREDENTIALS'
+);
+
+// C. Khóa tài khoản sau 5 lần sai và kiểm tra hết hạn sau 15 phút
+$pdo->prepare("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE username = 'sv003'")->execute();
+$lockTestClient = new ApiTestClient();
+for ($i = 1; $i <= 5; $i++) {
+    $lockTestClient->request('POST', '/login', ['username' => 'sv003', 'password' => 'WrongPass@' . $i]);
+}
+$lockedCheckRes = $lockTestClient->request('POST', '/login', ['username' => 'sv003', 'password' => 'Student@003']);
+it("Tài khoản bị khóa sau 5 lần sai trả về HTTP 409 ACCOUNT_LOCKED không bị lỗi 500", 
+    $lockedCheckRes['status'] === 409 
+    && ($lockedCheckRes['body']['ok'] ?? true) === false
+    && ($lockedCheckRes['body']['error']['code'] ?? '') === 'ACCOUNT_LOCKED'
+    && str_contains($lockedCheckRes['body']['error']['message'] ?? '', 'tạm khóa 15 phút')
+);
+// Giả lập hết hạn khóa 15 phút (đặt locked_until về quá khứ)
+$pdo->prepare("UPDATE users SET locked_until = '2020-01-01 00:00:00' WHERE username = 'sv003'")->execute();
+$unlockedRes = $lockTestClient->request('POST', '/login', ['username' => 'sv003', 'password' => 'Student@003']);
+it("Tài khoản hết hạn khóa 15 phút đăng nhập thành công trở lại (HTTP 200)", 
+    $unlockedRes['status'] === 200 && ($unlockedRes['body']['ok'] ?? false) === true
+);
+
+// D. Đăng nhập ghi nhận dòng audit_log và rate_limit không phát sinh lỗi
+$auditSuccessRow = $pdo->query("SELECT id, action, entity, user_id FROM audit_log WHERE action = 'login_success' AND entity = 'users' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+$auditFailedRow = $pdo->query("SELECT id, action, entity, payload FROM audit_log WHERE action = 'login_failed' AND entity = 'users' ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+$rateLimitDir = sys_get_temp_dir() . '/tuition_rate_limits';
+$hasRateLimitFile = is_dir($rateLimitDir) && count(glob($rateLimitDir . '/*.json')) > 0;
+it("Đăng nhập ghi audit_log (login_success, login_failed) và cập nhật rate limit không phát sinh lỗi", 
+    !empty($auditSuccessRow['id'])
+    && !empty($auditFailedRow['id'])
+    && $hasRateLimitFile
+);
+
+// E. /api/reports/summary trả về số nguyên cho mọi trạng thái và overpaid, không có null
+$allSummaryRes = $freshClient->request('GET', '/reports/summary');
+$allRepData = $allSummaryRes['body']['data'] ?? [];
+$allStatusCounts = $allRepData['status_counts'] ?? [];
+$allOverpaid = $allRepData['overpaid'] ?? [];
+it("/api/reports/summary phạm vi ALL trả về số nguyên cho mọi trạng thái, không có giá trị null", 
+    $allSummaryRes['status'] === 200
+    && is_int($allStatusCounts['unpaid'] ?? null)
+    && is_int($allStatusCounts['partial'] ?? null)
+    && is_int($allStatusCounts['paid'] ?? null)
+    && is_int($allOverpaid['count'] ?? null)
+    && is_int($allOverpaid['amount'] ?? null)
+    && is_int($allRepData['total_students_with_records'] ?? null)
+);
+
+// Kiểm tra từng học kỳ riêng biệt: 1, 2, 3
+$allSemestersValid = true;
+foreach ([1, 2, 3] as $sid) {
+    $semCheckRes = $freshClient->request('GET', "/reports/summary?semester={$sid}");
+    $scData = $semCheckRes['body']['data'] ?? [];
+    $scStatus = $scData['status_counts'] ?? [];
+    $scOverpaid = $scData['overpaid'] ?? [];
+    if ($semCheckRes['status'] !== 200
+        || !is_int($scStatus['unpaid'] ?? null)
+        || !is_int($scStatus['partial'] ?? null)
+        || !is_int($scStatus['paid'] ?? null)
+        || !is_int($scOverpaid['count'] ?? null)
+        || !is_int($scOverpaid['amount'] ?? null)
+    ) {
+        $allSemestersValid = false;
+        break;
+    }
+}
+it("/api/reports/summary trả về số nguyên không có null cho từng học kỳ riêng lẻ (1, 2, 3)", 
+    $allSemestersValid
+);
+
+// F. Tổng số lượng các trạng thái cộng nộp thừa bằng đúng tổng số hồ sơ trong phạm vi
+$sumReconcilesAll = (($allStatusCounts['unpaid'] + $allStatusCounts['partial'] + $allStatusCounts['paid'] + $allOverpaid['count']) === $allRepData['total_students_with_records']);
+$sumReconcilesSems = true;
+foreach ([1, 2, 3] as $sid) {
+    $sRes = $freshClient->request('GET', "/reports/summary?semester={$sid}");
+    $sd = $sRes['body']['data'] ?? [];
+    $sum = ($sd['status_counts']['unpaid'] ?? 0) + ($sd['status_counts']['partial'] ?? 0) + ($sd['status_counts']['paid'] ?? 0) + ($sd['overpaid']['count'] ?? 0);
+    if ($sum !== ($sd['total_students_with_records'] ?? -1)) {
+        $sumReconcilesSems = false;
+        break;
+    }
+}
+it("Tổng số lượng 3 trạng thái + nộp thừa bằng đúng tổng số hồ sơ học phí trong phạm vi (toàn trường & từng kỳ)", 
+    $sumReconcilesAll && $sumReconcilesSems
+);
+
+// G. Học kỳ không có hồ sơ học phí nào (phạm vi rỗng) trả về số 0 cho mọi trạng thái, không bị '-'
+$pdo->exec("INSERT INTO semesters (term_no, academic_year_start) VALUES (3, 2029)");
+$emptySemesterId = (int)$pdo->lastInsertId();
+$emptyScopeRes = $freshClient->request('GET', "/reports/summary?semester={$emptySemesterId}");
+$emptyScopeData = $emptyScopeRes['body']['data'] ?? [];
+$emptyStatus = $emptyScopeData['status_counts'] ?? [];
+$emptyOverpaid = $emptyScopeData['overpaid'] ?? [];
+it("Học kỳ không có hồ sơ nào trả về số 0 cho mọi trạng thái (không phải null hay '-')", 
+    $emptyScopeRes['status'] === 200
+    && ($emptyScopeData['total_students_with_records'] ?? -1) === 0
+    && ($emptyStatus['unpaid'] ?? -1) === 0
+    && ($emptyStatus['partial'] ?? -1) === 0
+    && ($emptyStatus['paid'] ?? -1) === 0
+    && ($emptyOverpaid['count'] ?? -1) === 0
+    && ($emptyOverpaid['amount'] ?? -1) === 0
+    && ($emptyScopeData['gross_tuition'] ?? -1) === 0
+    && ($emptyScopeData['receivable'] ?? -1) === 0
+    && ($emptyScopeData['collected'] ?? -1) === 0
+    && ($emptyScopeData['outstanding'] ?? -1) === 0
+);
+$pdo->exec("DELETE FROM semesters WHERE id = {$emptySemesterId}");
+
+// ----------------------------------------------------------------------------
 // TỔNG KẾT BỘ KIỂM THỬ
 // ----------------------------------------------------------------------------
 echo "\n" . COLOR_BOLD . "====================================================================\n";

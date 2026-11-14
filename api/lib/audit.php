@@ -36,7 +36,7 @@ function log_audit(
             'payload'   => $payloadJson,
             'ip'        => $ip,
         ]);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         // Log to system error log without breaking client operation
         error_log("Failed to write audit log: " . $e->getMessage());
     }
