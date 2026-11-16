@@ -27,8 +27,13 @@ The application provides strict role-based access control, isolating administrat
 Get the application up and running on your local machine in under 5 minutes:
 
 1. **Install XAMPP**: Download and install [XAMPP for Windows](https://www.apachefriends.org/) (PHP 8.1+ and MySQL/MariaDB). Start both the **Apache** and **MySQL** services in the XAMPP Control Panel.
-2. **Deploy Project Files**: Copy or clone this project repository into your XAMPP web root folder at `C:\xampp\htdocs\tuition-system` (or `C:\xampp\htdocs\bigprojectnew`).
-3. **Initialize Database**: Open your terminal (PowerShell or Command Prompt) and execute the setup scripts:
+2. **Create root database**: Navigate to:
+   ```text
+   http://localhost/phpmyadmin
+   ```
+   Create a database named `tuition_system` with the collation `utf8mb4_unicode_ci` (if it does not already exist).
+3. **Deploy Project Files**: Copy or clone this project repository into your XAMPP web root folder at `C:\xampp\htdocs\tuition-system` (or `C:\xampp\htdocs\bigprojectnew`).
+4. **Initialize Database**: Open your terminal (PowerShell or Command Prompt) and execute the setup scripts:
    ```powershell
    cd C:\xampp\htdocs\tuition-system
    C:\xampp\mysql\bin\mysql.exe -u root < database/create_app_user.sql
@@ -36,11 +41,11 @@ Get the application up and running on your local machine in under 5 minutes:
    C:\xampp\mysql\bin\mysql.exe -u root tuition_system < database/seed.sql
    C:\xampp\php\php.exe database/seed_users.php --db=tuition_system
    ```
-4. **Launch Application in Browser**: Open Google Chrome, Microsoft Edge, or Mozilla Firefox and navigate to:
+5. **Launch Application in Browser**: Open Google Chrome, Microsoft Edge, or Mozilla Firefox and navigate to:
    ```text
    http://localhost/tuition-system/
    ```
-5. **Log In and Explore**: Use one of the pre-configured demo accounts below to explore administrator dashboards or student self-service portals.
+6. **Log In and Explore**: Use one of the pre-configured demo accounts below to explore administrator dashboards or student self-service portals.
 
 > [!TIP]
 > For advanced configuration, automated test suites, backup scripts, and troubleshooting, consult the comprehensive [Installation Guide](file:///c:/Users/infin/Documents/antigravity/bigprojectnew/docs/Installation_Guide.docx).
