@@ -59,7 +59,7 @@ The system comes pre-seeded with test accounts covering realistic student and ad
 | Username | Password | Role | Description & Initial State |
 | :--- | :--- | :--- | :--- |
 | `admin` | `Admin@123` | Administrator | Head Finance Officer; full administrative and approval rights |
-| `staff01` | `Staff@001` | Administrator | Finance Clerk; can record payments and submit refund requests |
+| `staff01` | `Staff@123` | Administrator | Finance Clerk; can record payments and submit refund requests |
 | `sv001` | `Student@001` | Student | Nguyễn Văn An (Class K22-CNTT1); tuition fully paid, has excess balance |
 | `sv002` | `Student@002` | Student | Trần Thị Bích (Class K22-CNTT1); partially paid, outstanding balance |
 | `sv006` | `Student@006` | Student | First-time login demo; requires immediate password change |
