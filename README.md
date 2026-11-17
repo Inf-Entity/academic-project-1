@@ -33,7 +33,7 @@ Get the application up and running on your local machine in under 5 minutes:
    ```
    Create a database named `tuition_system` with the collation `utf8mb4_unicode_ci` (if it does not already exist).
 3. **Deploy Project Files**: Copy or clone this project repository into your XAMPP web root folder at `C:\xampp\htdocs\tuition-system` (or `C:\xampp\htdocs\bigprojectnew`).
-4. **Initialize Database**: Open your terminal (PowerShell or Command Prompt) and execute the setup scripts:
+4. **Initialize Database**: Open your Command Prompt and execute the setup scripts:
    ```powershell
    cd C:\xampp\htdocs\tuition-system
    C:\xampp\mysql\bin\mysql.exe -u root < database/create_app_user.sql
